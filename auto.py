@@ -1,6 +1,8 @@
 import csv
 import time
-from multiprocessing import Process
+import os
+from datetime import datetime
+from multiprocessing import Process, Lock
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -8,6 +10,29 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+# Create lock for file writing
+file_lock = Lock()
+
+def save_app_password(email, password, app_password):
+    """Save successful app password to CSV file"""
+    with file_lock:
+        file_exists = os.path.exists('app_passwords.csv')
+        with open('app_passwords.csv', 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(['Email', 'Password', 'App_Password', 'Created_Date'])
+            writer.writerow([email, password, app_password, datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+
+def save_failed_account(email, password, error_message):
+    """Save failed account to CSV file"""
+    with file_lock:
+        file_exists = os.path.exists('failed_accounts.csv')
+        with open('failed_accounts.csv', 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(['Email', 'Password', 'Error_Message', 'Failed_Date'])
+            writer.writerow([email, password, str(error_message), datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
 
 def google_login(email, password):
     options = Options()
@@ -51,6 +76,7 @@ def google_login(email, password):
                 driver.execute_script("arguments[0].click();", twofa_btn)
         except Exception as e:
             print(f"❌ Could not find 2FA button: {e}")
+            save_failed_account(email, password, f"2FA button not found: {e}")
             driver.quit()
             return
 
@@ -127,6 +153,7 @@ def google_login(email, password):
                     spans = strong.find_elements(By.TAG_NAME, 'span')
                     app_password = ''.join([span.text for span in spans]).replace(' ', '')
                     print(f"🔑 Generated app password: {app_password}")
+                    save_app_password(email, password, app_password)
                 except Exception as e:
                     print(f"❌ Could not extract app password: {e}")
 
@@ -138,6 +165,7 @@ def google_login(email, password):
                 time.sleep(60)
         except Exception as e:
             print(f"❌ 2FA phone modal failed: {e}")
+            save_failed_account(email, password, f"2FA phone modal failed: {e}")
             try:
                 inputs = driver.find_elements(By.TAG_NAME, 'input')
                 print(f"Found {len(inputs)} input fields:")
@@ -151,6 +179,7 @@ def google_login(email, password):
 
     except Exception as e:
         print(f"❌ Login failed for {email}: {e}")
+        save_failed_account(email, password, f"Login failed: {e}")
         driver.quit()
 
 if __name__ == "__main__":

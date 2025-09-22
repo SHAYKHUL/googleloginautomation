@@ -4,21 +4,6 @@ from multiprocessing import Process
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-
-import csv
-import time
-from multiprocessing import Process
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-
-import csv
-import time
-from multiprocessing import Process
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
@@ -117,6 +102,36 @@ def google_login(email, password):
                 print("✅ Done button clicked to finish 2FA setup.")
             except Exception as e:
                 print(f"❌ Done button not found or not clickable: {e}")
+
+            # Step 7: Go to app passwords page and create an app password
+            try:
+                driver.get("https://myaccount.google.com/apppasswords")
+                time.sleep(2)
+                app_input = wait.until(EC.visibility_of_element_located((By.XPATH, '//input[@id="i4" and @jsname="YPqjbf"]')))
+                app_input.clear()
+                app_input.send_keys("AutomationApp")
+
+                create_btn = wait.until(EC.element_to_be_clickable((By.XPATH, '//button[.//span[@jsname="V67aGc" and text()="Create"]]')))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", create_btn)
+                time.sleep(1)
+                try:
+                    create_btn.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", create_btn)
+                print("✅ App password created.")
+
+                # Step 8: Collect the generated app password from the modal
+                try:
+                    modal = wait.until(EC.visibility_of_element_located((By.XPATH, '//div[@class="uW2Fw-P5QLlc" and @aria-modal="true"]')))
+                    strong = modal.find_element(By.XPATH, './/strong[@class="v2CTKd KaSAf"]')
+                    spans = strong.find_elements(By.TAG_NAME, 'span')
+                    app_password = ''.join([span.text for span in spans]).replace(' ', '')
+                    print(f"🔑 Generated app password: {app_password}")
+                except Exception as e:
+                    print(f"❌ Could not extract app password: {e}")
+
+            except Exception as e:
+                print(f"❌ App password creation failed: {e}")
 
             # Keep browser alive
             while True:

@@ -21,8 +21,8 @@ def save_app_password(email, password, app_password):
         with open('app_passwords.csv', 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['Email', 'Password', 'App_Password', 'Created_Date'])
-            writer.writerow([email, password, app_password, datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+                writer.writerow(['Email', 'App_Password', 'Created_Date'])
+            writer.writerow([email, app_password, datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
 
 def save_failed_account(email, password, error_message):
     """Save failed account to CSV file"""

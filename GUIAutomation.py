@@ -676,99 +676,58 @@ def google_automation_worker(email, password, status_queue, stop_event):
             status_queue.put(("status", f"[{email}] Browser left open for manual debugging"))
             return
 
-        # Smart 2FA completion modal handling with Done button
-        try:
-            if stop_event.is_set():
-                status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
-                return
-                
-            status_queue.put(("status", f"[{email}] Looking for 2FA completion modal with Done button"))
-            time.sleep(4)  # Allow 2FA setup to complete and modal to appear
-            
-            # Comprehensive Done button selectors for "You're now protected" modal
-            done_selectors = [
-                # Language-specific Done button text
-                '//button[contains(@class, "VfPpkd-LgbsSe") and .//span[contains(text(), "Done") or contains(text(), "Fertig") or contains(text(), "Terminé") or contains(text(), "完了") or contains(text(), "Готово") or contains(text(), "Concluído") or contains(text(), "Listo") or contains(text(), "Fatto")]]',
-                # Modal-specific Done button selectors
-                '//div[@role="dialog"]//button[.//span[contains(text(), "Done") or contains(text(), "Fertig") or contains(text(), "Terminé")]]',
-                '//div[contains(@class, "VfPpkd-T0kwCb")]//button[.//span[contains(text(), "Done")]]',  # Modal container
-                # Generic modal action buttons
-                '//button[@data-mdc-dialog-action="ok"]',
-                '//button[@data-mdc-dialog-action="close"]',
-                '//button[@data-mdc-dialog-action="done"]',
-                # Primary button in modal
-                '//button[contains(@class, "mdc-button") and contains(@class, "mdc-dialog__button--primary")]',
-                '//div[@role="dialog"]//button[contains(@class, "VfPpkd-LgbsSe--primary")]',
-                '//div[@role="dialog"]//button[contains(@class, "mdc-button--raised")]',
-                # Position-based selectors (often Done is the last/primary button)
-                '//div[@role="dialog"]//button[last()]',
-                '//div[@role="dialog"]//button[position()=last()]',
-                '//div[contains(@class, "VfPpkd-T0kwCb")]//button[last()]',
-                # JSName-based selectors
-                '//button[.//span[@jsname="V67aGc"]]',
-                '//div[@role="dialog"]//button[.//span[@jsname="V67aGc"]]',
-                # Very generic fallbacks
-                '//button[contains(@class, "VfPpkd-LgbsSe")]',
-                '//div[@aria-modal="true"]//button[contains(@class, "VfPpkd-LgbsSe")]'
-            ]
-            
-            done_button_found = None
-            for i, selector in enumerate(done_selectors):
-                try:
-                    # Use smart finder with moderate timeout for each attempt
-                    temp_finder = SmartElementFinder(driver, 4)
-                    done_button_found = temp_finder.find_clickable_element([selector], f"Done button (attempt {i+1})")
-                    status_queue.put(("status", f"[{email}] Found Done button with selector {i+1}"))
-                    break
-                except Exception as e:
-                    continue
-            
-            if done_button_found:
-                try:
-                    finder.smart_click(done_button_found, "Done button in 2FA completion modal")
-                    status_queue.put(("status", f"[{email}] ✅ Successfully clicked Done button - 2FA setup completed"))
-                    time.sleep(3)  # Allow modal to close completely
-                except Exception as e:
-                    status_queue.put(("status", f"[{email}] Done button click failed but continuing: {e}"))
-            else:
-                status_queue.put(("status", f"[{email}] Done button not found - 2FA may already be complete or modal different"))
-                
-                # Debug: Log available buttons for troubleshooting
-                try:
-                    all_buttons = driver.find_elements(By.TAG_NAME, "button")
-                    status_queue.put(("status", f"[{email}] DEBUG: Found {len(all_buttons)} buttons on page"))
-                    
-                    modal_buttons = driver.find_elements(By.XPATH, '//div[@role="dialog"]//button')
-                    aria_modal_buttons = driver.find_elements(By.XPATH, '//div[@aria-modal="true"]//button')
-                    
-                    status_queue.put(("status", f"[{email}] DEBUG: Found {len(modal_buttons)} buttons in role=dialog, {len(aria_modal_buttons)} in aria-modal"))
-                    
-                    # Check both types of modal buttons
-                    all_modal_buttons = modal_buttons + aria_modal_buttons
-                    for i, btn in enumerate(all_modal_buttons[:5]):  # Show first 5 modal buttons
-                        try:
-                            btn_text = btn.get_attribute("textContent") or btn.get_attribute("innerText") or "No text"
-                            btn_class = btn.get_attribute("class") or "No class"
-                            status_queue.put(("status", f"[{email}] DEBUG: Modal Button {i+1}: '{btn_text[:50]}' | Class: '{btn_class[:50]}'"))
-                        except:
-                            pass
-                except:
-                    pass
-                
-                # Don't raise exception here, as 2FA might still be working
-            
-        except Exception as e:
-            status_queue.put(("status", f"[{email}] 2FA completion modal handling: {e}"))
-
-        # Step 8: Go to app passwords page and create an app password  
+        # Skip "You're now protected" modal - Direct navigation to app passwords
         if stop_event.is_set():
             status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
             return
             
-        status_queue.put(("status", f"[{email}] Navigating to App Passwords"))
+        status_queue.put(("status", f"[{email}] Skipping 2FA completion modal - navigating directly to App Passwords"))
+        time.sleep(2)  # Brief pause to ensure 2FA setup completes
+        
+        # Direct navigation to app passwords page (saves time)
         try:
-            driver.get("https://myaccount.google.com/apppasswords")
-            time.sleep(2)
+            status_queue.put(("status", f"[{email}] Smart navigation to App Passwords page"))
+            
+            # Multiple app password URLs to try
+            app_password_urls = [
+                "https://myaccount.google.com/apppasswords",
+                "https://myaccount.google.com/security/signinoptions/twosv/apppasswords",
+                "https://accounts.google.com/b/0/apppasswords"
+            ]
+            
+            app_passwords_loaded = False
+            for url in app_password_urls:
+                try:
+                    driver.get(url)
+                    finder.wait_for_page_load()
+                    time.sleep(2)
+                    
+                    # Verify app passwords page loaded
+                    current_url = driver.current_url
+                    page_source = driver.page_source.lower()
+                    if "apppasswords" in current_url or "app password" in page_source or "application password" in page_source:
+                        app_passwords_loaded = True
+                        status_queue.put(("status", f"[{email}] ✅ App Passwords page loaded successfully"))
+                        break
+                except Exception:
+                    continue
+            
+            if not app_passwords_loaded:
+                raise Exception("Could not navigate to App Passwords page")
+            
+        except Exception as e:
+            status_queue.put(("error", f"[{email}] App Passwords navigation failed: {e}"))
+            save_failed_account(email, password, f"App Passwords navigation failed: {e}")
+            status_queue.put(("status", f"[{email}] Browser left open for manual navigation"))
+            return
+
+        # Step 8: Create app password
+        if stop_event.is_set():
+            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            return
+            
+        status_queue.put(("status", f"[{email}] Creating app password"))
+        try:
             app_input = finder.wait.until(EC.visibility_of_element_located((By.XPATH, '//input[@id="i4" and @jsname="YPqjbf"]')))
             app_input.clear()
             app_input.send_keys("AutomationApp")
@@ -816,8 +775,8 @@ def google_automation_worker(email, password, status_queue, stop_event):
             status_queue.put(("error", f"[{email}] App password creation failed: {e}"))
             save_failed_account(email, password, f"App password creation failed: {e}")
 
-        # Keep browser open for user review
-        status_queue.put(("status", f"[{email}] ✅ Automation completed - Browser left open for review"))
+        # Mark automation as completed successfully
+        status_queue.put(("status", f"[{email}] ✅ Automation completed successfully - Browser left open for review"))
         status_queue.put(("completed", email))
 
     except Exception as e:

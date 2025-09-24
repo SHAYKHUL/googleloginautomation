@@ -335,7 +335,7 @@ def collect_backup_codes(driver, finder, email, status_queue):
     return codes[:2]  # Return only first 2 codes
 
 def save_app_password(email, password, app_password, backup_codes=None):
-    """Save successful account with app password and backup codes to CSV"""
+    """Save successful account with app password and backup codes to CSV immediately"""
     with file_lock:
         file_exists = os.path.isfile("successful_accounts.csv")
         with open("successful_accounts.csv", mode="a", newline="", encoding="utf-8") as f:
@@ -347,7 +347,18 @@ def save_app_password(email, password, app_password, backup_codes=None):
             code1 = backup_codes[0] if backup_codes and len(backup_codes) > 0 else ""
             code2 = backup_codes[1] if backup_codes and len(backup_codes) > 1 else ""
             
+            # Write immediately to CSV with explicit flush
             writer.writerow([email, password, app_password, code1, code2, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+            f.flush()  # Force immediate write to disk
+            os.fsync(f.fileno())  # Ensure data is written to disk immediately
+            
+        # Return confirmation of what was saved
+        return {
+            'email': email,
+            'app_password': app_password,
+            'backup_codes': [code1, code2] if code1 or code2 else [],
+            'saved_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
 
 def save_failed_account(email, password, reason):
     """Save failed account with reason to CSV"""
@@ -1059,12 +1070,20 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 # Collect backup codes after getting app password
                 backup_codes = collect_backup_codes(driver, finder, email, status_queue)
                 
-                # Save app password and backup codes together
-                save_app_password(email, password, app_password, backup_codes)
+                # IMMEDIATE SAVE - Save app password and backup codes together RIGHT NOW
+                status_queue.put(("status", f"[{email}] 💾 Saving app password and backup codes to CSV immediately..."))
+                save_result = save_app_password(email, password, app_password, backup_codes)
+                
+                # Confirm immediate save success with details
+                backup_count = len(backup_codes) if backup_codes else 0
+                status_queue.put(("success", f"[{email}] ✅ SAVED IMMEDIATELY: App password + {backup_count} backup codes written to CSV"))
+                status_queue.put(("success", f"[{email}] 📝 File: successful_accounts.csv | Time: {save_result['saved_at']}"))
+                status_queue.put(("update_status", (email, 'Success - Saved')))
                 
             except Exception as e:
                 status_queue.put(("error", f"[{email}] Could not extract app password: {e}"))
                 save_failed_account(email, password, f"Could not extract app password: {e}")
+                status_queue.put(("update_status", (email, 'Failed')))
 
         except Exception as e:
             status_queue.put(("error", f"[{email}] App password creation failed: {e}"))
@@ -1116,6 +1135,14 @@ class GoogleAutomationGUI:
         subtitle_label = tk.Label(title_frame, text="Automate 2FA setup and app password generation", 
                                  font=('Arial', 10), bg='#f0f0f0', fg='#7f8c8d')
         subtitle_label.pack()
+
+        # Max concurrent browsers setting
+        concurrency_frame = tk.Frame(self.root, bg='#f0f0f0')
+        concurrency_frame.pack(pady=(0, 10))
+        tk.Label(concurrency_frame, text="Max concurrent browsers:", font=('Arial', 10), bg='#f0f0f0').pack(side='left')
+        self.max_concurrent_var = tk.IntVar(value=2)
+        self.max_concurrent_spin = tk.Spinbox(concurrency_frame, from_=1, to=20, width=5, textvariable=self.max_concurrent_var, font=('Arial', 10))
+        self.max_concurrent_spin.pack(side='left', padx=(5, 0))
         
         # File selection frame
         file_frame = tk.LabelFrame(self.root, text="📁 Account File", font=('Arial', 10, 'bold'), 
@@ -1259,45 +1286,66 @@ class GoogleAutomationGUI:
         threading.Thread(target=self.run_automation, daemon=True).start()
     
     def run_automation(self):
+        import concurrent.futures
         try:
             self.worker_threads = []
             completed_count = 0
+            max_concurrent = self.max_concurrent_var.get()
             
-            for i, account in enumerate(self.accounts):
-                if self.stop_event.is_set():
-                    break
-                
-                email = account['email']
-                password = account['password']
-                
-                # Update tree status
-                for item in self.accounts_tree.get_children():
-                    if self.accounts_tree.item(item)['values'][0] == email:
-                        self.accounts_tree.item(item, values=(email, 'Starting...'))
-                        break
-                
-                # Start worker thread for this account
-                worker = threading.Thread(
-                    target=google_automation_worker,
-                    args=(email, password, self.status_queue, self.stop_event),
-                    daemon=True
-                )
-                worker.start()
-                self.worker_threads.append(worker)
-                
-                time.sleep(2)  # Small delay between starting threads
-            
+            self.status_queue.put(("status", f"🚀 Starting automation with max {max_concurrent} concurrent browsers"))
             self.status_queue.put(("automation_started", len(self.accounts)))
-            
-            # Wait for all threads to complete
-            for worker in self.worker_threads:
-                worker.join()
-            
+
+            def thread_wrapper(email, password):
+                try:
+                    # Update tree status to Starting
+                    self.status_queue.put(("update_status", (email, 'Starting...')))
+                    self.status_queue.put(("status", f"[{email}] Browser launching..."))
+                    
+                    # Run the actual automation
+                    google_automation_worker(email, password, self.status_queue, self.stop_event)
+                    
+                except Exception as e:
+                    self.status_queue.put(("error", f"[{email}] Thread wrapper failed: {str(e)}"))
+
+            # Use ThreadPoolExecutor to limit concurrent browsers
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+                futures = []
+                
+                # Submit all tasks
+                for i, account in enumerate(self.accounts):
+                    if self.stop_event.is_set():
+                        break
+                        
+                    email = account['email']
+                    password = account['password']
+                    
+                    self.status_queue.put(("status", f"📝 Queuing {email} (Position {i+1}/{len(self.accounts)})"))
+                    future = executor.submit(thread_wrapper, email, password)
+                    futures.append((future, email))
+                    
+                    # Small delay to stagger starts
+                    time.sleep(0.5)
+                
+                self.status_queue.put(("status", f"✅ All {len(futures)} tasks queued. Processing with {max_concurrent} concurrent browsers..."))
+                
+                # Wait for completion and handle results
+                completed = 0
+                for future, email in futures:
+                    try:
+                        future.result()  # This will raise any exception that occurred
+                        completed += 1
+                        progress = (completed / len(futures)) * 100
+                        self.status_queue.put(("progress", progress))
+                        self.status_queue.put(("status", f"📊 Progress: {completed}/{len(futures)} accounts processed ({progress:.1f}%)"))
+                        
+                    except Exception as e:
+                        self.status_queue.put(("error", f"[{email}] Automation failed: {str(e)}"))
+
             if not self.stop_event.is_set():
                 self.status_queue.put(("automation_complete", None))
-            
+                
         except Exception as e:
-            self.status_queue.put(("error", f"Automation failed: {str(e)}"))
+            self.status_queue.put(("error", f"❌ Automation controller failed: {str(e)}"))
         finally:
             self.status_queue.put(("finished", None))
     
@@ -1363,8 +1411,20 @@ class GoogleAutomationGUI:
                                 self.accounts_tree.item(item, values=(email, 'Completed'))
                             break
                 
+                elif msg_type == "update_status":
+                    email, status = data
+                    for item in self.accounts_tree.get_children():
+                        if self.accounts_tree.item(item)['values'][0] == email:
+                            self.accounts_tree.item(item, values=(email, status))
+                            break
+                
+                elif msg_type == "progress":
+                    progress_value = data
+                    self.progress_var.set(progress_value)
+                    self.progress_label.config(text=f"Progress: {progress_value:.1f}%")
+                
                 elif msg_type == "automation_started":
-                    self.log_message(f"🔥 Started automation for {data} accounts. Browsers should be opening.")
+                    self.log_message(f"🔥 Started automation for {data} accounts. Browsers launching...")
                 
                 elif msg_type == "automation_complete":
                     self.log_message("✅ All automation processes completed!")

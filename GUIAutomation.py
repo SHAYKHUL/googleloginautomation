@@ -120,15 +120,168 @@ class SmartElementFinder:
 # Thread lock for file operations
 file_lock = threading.Lock()
 
-def save_app_password(email, password, app_password):
-    """Save successful account with app password to CSV"""
+def collect_backup_codes(driver, finder, email, status_queue):
+    """Collect 2 backup codes and return them as a list"""
+    codes = []
+    try:
+        status_queue.put(("status", f"[{email}] Navigating to backup codes page"))
+        driver.get("https://myaccount.google.com/two-step-verification/backup-codes")
+        finder.wait_for_page_load()
+        time.sleep(3)
+
+        # Click the 'Get backup codes' button or check if codes are already visible
+        get_codes_selectors = [
+            '//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d") and (contains(text(), "Get backup codes") or contains(text(), "Obtenir des codes") or contains(text(), "Backup-Codes abrufen") or contains(text(), "Obtener códigos") or contains(text(), "Получить резервные коды"))]',
+            '//button[.//span[contains(text(), "Get backup codes") or contains(text(), "Obtenir des codes") or contains(text(), "Backup-Codes abrufen") or contains(text(), "Show codes")]]',
+            '//span[contains(@class, "VfPpkd-vQzf8d") and (contains(text(), "Get backup codes") or contains(text(), "Show codes"))]',
+            '//button[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "backup") and contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "code")]'
+        ]
+        
+        # First check if backup codes are already visible before trying to click
+        status_queue.put(("status", f"[{email}] Checking if backup codes are already visible"))
+        existing_codes = driver.find_elements(By.XPATH, '//span[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12] | //div[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12]')
+        
+        if len(existing_codes) >= 2:
+            status_queue.put(("status", f"[{email}] Backup codes appear to already be visible, skipping button click"))
+        else:
+            # Try to click the button to show codes
+            get_codes_btn = None
+            for selector in get_codes_selectors:
+                try:
+                    get_codes_btn = finder.find_clickable_element([selector], "Get backup codes button")
+                    break
+                except Exception:
+                    continue
+                    
+            if get_codes_btn:
+                finder.smart_click(get_codes_btn, "Get backup codes button")
+                status_queue.put(("status", f"[{email}] ✅ Clicked Get backup codes button"))
+                time.sleep(3)  # Wait for codes to load
+            else:
+                status_queue.put(("status", f"[{email}] Get backup codes button not found, checking for existing codes"))
+
+        # CRITICAL FIX: Force click on <span class="AeBiU-RLmnJb"></span> if present to load codes
+        try:
+            # Look for the special span that triggers code loading (from your example)
+            trigger_spans = driver.find_elements(By.XPATH, '//span[contains(@class, "AeBiU-RLmnJb")]')
+            if trigger_spans:
+                status_queue.put(("status", f"[{email}] Found {len(trigger_spans)} <span class='AeBiU-RLmnJb'> elements, clicking to load backup codes"))
+                for i, span in enumerate(trigger_spans):
+                    try:
+                        finder.smart_click(span, f"Backup codes trigger span {i+1}")
+                        status_queue.put(("status", f"[{email}] ✅ Clicked trigger span {i+1}"))
+                        time.sleep(2)
+                    except Exception as e:
+                        status_queue.put(("status", f"[{email}] Could not click trigger span {i+1}: {e}"))
+            else:
+                status_queue.put(("status", f"[{email}] No <span class='AeBiU-RLmnJb'> elements found"))
+        except Exception as e:
+            status_queue.put(("status", f"[{email}] Error searching for trigger spans: {e}"))
+
+        # Wait for codes to appear and collect first 2
+        time.sleep(2)  # Extra wait for codes to load
+        
+        # Try multiple strategies to find backup codes
+        code_selectors = [
+            # Google's common backup code patterns
+            '//div[contains(@class, "backup-code")]',
+            '//span[contains(@class, "backup-code")]',
+            '//code',
+            # Generic patterns for backup codes (usually 8-10 chars)
+            '//span[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12 and contains(translate(text(), "0123456789abcdefghijklmnopqrstuvwxyz", "00000000000000000000000000000000000"), "0")]',
+            '//div[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12 and contains(translate(text(), "0123456789abcdefghijklmnopqrstuvwxyz", "00000000000000000000000000000000000"), "0")]',
+            # Material Design components
+            '//div[contains(@class, "VfPpkd-") and string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12]',
+            '//span[contains(@class, "VfPpkd-") and string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12]',
+            # Generic text elements that might contain codes
+            '//p[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12]',
+            '//li[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12]',
+            # Font family often used for codes
+            '//span[contains(@style, "monospace") or contains(@class, "monospace")]',
+            # Any element with exactly 8-10 alphanumeric characters
+            '//*[string-length(normalize-space(text())) >= 8 and string-length(normalize-space(text())) <= 12 and not(contains(text(), " "))]'
+        ]
+        
+        status_queue.put(("status", f"[{email}] Searching for backup codes with {len(code_selectors)} different strategies"))
+        
+        for i, selector in enumerate(code_selectors):
+            try:
+                status_queue.put(("status", f"[{email}] Trying selector {i+1}/{len(code_selectors)}"))
+                code_elements = driver.find_elements(By.XPATH, selector)
+                status_queue.put(("status", f"[{email}] Found {len(code_elements)} potential code elements"))
+                
+                if code_elements:
+                    for j, element in enumerate(code_elements):
+                        try:
+                            code_text = element.text.strip()
+                            status_queue.put(("status", f"[{email}] Element {j+1} text: '{code_text}' (length: {len(code_text)})"))
+                            
+                            # More flexible validation for backup codes
+                            if (len(code_text) >= 6 and len(code_text) <= 15 and 
+                                code_text.replace('-', '').replace(' ', '').replace('_', '').isalnum() and
+                                not any(word in code_text.lower() for word in ['backup', 'code', 'get', 'show', 'generate', 'click', 'button'])):
+                                codes.append(code_text)
+                                status_queue.put(("success", f"[{email}] ✅ Found backup code: {code_text}"))
+                                if len(codes) >= 2:
+                                    break
+                        except Exception as e:
+                            status_queue.put(("status", f"[{email}] Error reading element {j+1}: {e}"))
+                            continue
+                    
+                    if len(codes) >= 2:
+                        break
+            except Exception as e:
+                status_queue.put(("status", f"[{email}] Selector {i+1} failed: {e}"))
+                continue
+        
+        # If still no codes found, try to get all text content and parse manually
+        if not codes:
+            try:
+                status_queue.put(("status", f"[{email}] Fallback: scanning all page text for backup codes"))
+                page_text = driver.find_element(By.TAG_NAME, "body").text
+                
+                # Look for patterns that look like backup codes
+                import re
+                # Pattern: 8-12 alphanumeric characters, possibly with hyphens
+                code_pattern = r'\b[a-zA-Z0-9]{4}[-\s]?[a-zA-Z0-9]{4}\b|\b[a-zA-Z0-9]{8,12}\b'
+                potential_codes = re.findall(code_pattern, page_text)
+                
+                for code in potential_codes:
+                    clean_code = code.replace(' ', '').replace('-', '')
+                    if (len(clean_code) >= 6 and len(clean_code) <= 15 and 
+                        clean_code.isalnum() and
+                        not any(word in clean_code.lower() for word in ['backup', 'code', 'get', 'show', 'generate'])):
+                        codes.append(code)
+                        status_queue.put(("success", f"[{email}] ✅ Found backup code via regex: {code}"))
+                        if len(codes) >= 2:
+                            break
+            except Exception as e:
+                status_queue.put(("status", f"[{email}] Fallback text parsing failed: {e}"))
+        
+        if codes:
+            status_queue.put(("success", f"[{email}] 🔑 Collected {len(codes)} backup codes: {', '.join(codes[:2])}"))
+        else:
+            status_queue.put(("error", f"[{email}] Could not extract backup codes from page"))
+            
+    except Exception as e:
+        status_queue.put(("error", f"[{email}] Backup code collection failed: {e}"))
+    
+    return codes[:2]  # Return only first 2 codes
+
+def save_app_password(email, password, app_password, backup_codes=None):
+    """Save successful account with app password and backup codes to CSV"""
     with file_lock:
         file_exists = os.path.isfile("successful_accounts.csv")
         with open("successful_accounts.csv", mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["Email", "App Password", "Generated At"])
-            writer.writerow([email, app_password, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                writer.writerow(["Email", "Password", "App Password", "Backup Code 1", "Backup Code 2", "Generated At"])
+            
+            # Ensure we have 2 backup codes or empty strings
+            code1 = backup_codes[0] if backup_codes and len(backup_codes) > 0 else ""
+            code2 = backup_codes[1] if backup_codes and len(backup_codes) > 1 else ""
+            
+            writer.writerow([email, password, app_password, code1, code2, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
 
 def save_failed_account(email, password, reason):
     """Save failed account with reason to CSV"""
@@ -760,13 +913,20 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 raise Exception("Could not find Create button with any selector")
 
             # Step 9: Collect the generated app password from the modal
+            backup_codes = []
             try:
                 modal = finder.wait.until(EC.visibility_of_element_located((By.XPATH, '//div[@class="uW2Fw-P5QLlc" and @aria-modal="true"]')))
                 strong = modal.find_element(By.XPATH, './/strong[@class="v2CTKd KaSAf"]')
                 spans = strong.find_elements(By.TAG_NAME, 'span')
                 app_password = ''.join([span.text for span in spans]).replace(' ', '')
                 status_queue.put(("success", f"[{email}] 🔑 Generated app password: {app_password}"))
-                save_app_password(email, password, app_password)
+                
+                # Collect backup codes after getting app password
+                backup_codes = collect_backup_codes(driver, finder, email, status_queue)
+                
+                # Save app password and backup codes together
+                save_app_password(email, password, app_password, backup_codes)
+                
             except Exception as e:
                 status_queue.put(("error", f"[{email}] Could not extract app password: {e}"))
                 save_failed_account(email, password, f"Could not extract app password: {e}")

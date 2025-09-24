@@ -43,7 +43,24 @@ class SmartElementFinder:
         try:
             return self.wait.until(EC.element_to_be_clickable((By.XPATH, selectors[0])))
         except TimeoutException:
-            raise TimeoutException(f"Could not find {description} with any of the provided selectors")
+            # Final fallback - look for any visible button in common UI contexts
+            fallback_selectors = [
+                '//button[not(@disabled) and not(contains(@style, "display: none"))]',
+                '//div[@role="button" and not(contains(@style, "display: none"))]',
+                '//span[@role="button" and not(contains(@style, "display: none"))]',
+                '//input[@type="submit" and not(@disabled)]'
+            ]
+            
+            for fallback in fallback_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, fallback)
+                    if elements:
+                        # Return the most likely candidate (usually the last one in modals)
+                        return elements[-1] if len(elements) > 1 else elements[0]
+                except:
+                    continue
+                    
+            raise TimeoutException(f"Could not find {description} with any of the provided selectors or fallbacks")
     
     def smart_click(self, element, description="element"):
         """Perform smart clicking with multiple fallback methods"""
@@ -117,6 +134,36 @@ class SmartElementFinder:
         """Wait for page to fully load"""
         return self.wait.until(lambda driver: driver.execute_script("return document.readyState") == "complete")
 
+# Multi-language support dictionary
+MULTI_LANG_TRANSLATIONS = {
+    'next': ['Next', 'Weiter', 'Suivant', '次へ', 'Далее', 'Próximo', 'Siguiente', 'Avanti', 'Volgende', 'Nästa', 'Następny', 'Próxima', 'Dalej', 'Naprej', 'Järgmine', 'Sljedeći', 'Нататък', 'Επόμενο', 'Järgmine', 'Sonraki'],
+    'save': ['Save', 'Speichern', 'Enregistrer', '保存', 'Сохранить', 'Salvar', 'Guardar', 'Salva', 'Opslaan', 'Spara', 'Zapisz', 'Salvar', 'Zapisz', 'Shrani', 'Salvesta', 'Spremi', 'Запази', 'Αποθήκευση', 'Kaydet'],
+    'create': ['Create', 'Erstellen', 'Créer', '作成', 'Создать', 'Criar', 'Crear', 'Crea', 'Maken', 'Skapa', 'Utwórz', 'Criar', 'Utwórz', 'Ustvari', 'Loo', 'Stvori', 'Създай', 'Δημιουργία', 'Oluştur'],
+    'get_backup_codes': ['Get backup codes', 'Backup-Codes abrufen', 'Obtenir des codes de secours', 'バックアップコードを取得', 'Получить резервные коды', 'Obter códigos de backup', 'Obtener códigos de respaldo', 'Ottieni codici di backup', 'Back-upcodes ophalen', 'Hämta säkerhetskoder', 'Pobierz kody zapasowe', 'Obter códigos de backup', 'Pobierz kody zapasowe', 'Pridobi varnostne kode', 'Hangi varukoode', 'Dohvati sigurnosne kodove', 'Вземи резервни кодове', 'Λήψη εφεδρικών κωδικών', 'Yedek kodları al'],
+    'turn_on': ['Turn on', 'Einschalten', 'Activer', '有効にする', 'Включить', 'Ativar', 'Activar', 'Attiva', 'Inschakelen', 'Aktivera', 'Włącz', 'Ativar', 'Włącz', 'Vklopi', 'Lülita sisse', 'Uključi', 'Включи', 'Ενεργοποίηση', 'Aç'],
+    'done': ['Done', 'Fertig', 'Terminé', '完了', 'Готово', 'Concluído', 'Listo', 'Fatto', 'Klaar', 'Klar', 'Gotowe', 'Concluído', 'Gotowe', 'Končano', 'Valmis', 'Gotovo', 'Готово', 'Τέλος', 'Tamam']
+}
+
+def get_multi_language_selector(button_type, base_selector_template):
+    """Generate multi-language XPath selector for buttons"""
+    if button_type not in MULTI_LANG_TRANSLATIONS:
+        return base_selector_template
+    
+    translations = MULTI_LANG_TRANSLATIONS[button_type]
+    text_conditions = []
+    
+    for text in translations:
+        text_conditions.extend([
+            f'text()="{text}"',
+            f'contains(text(), "{text}")',
+            f'normalize-space(text())="{text}"',
+            f'contains(normalize-space(text()), "{text}")',
+            f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+        ])
+    
+    combined_condition = ' or '.join(text_conditions)
+    return base_selector_template.format(combined_condition)
+
 # Thread lock for file operations
 file_lock = threading.Lock()
 
@@ -130,11 +177,30 @@ def collect_backup_codes(driver, finder, email, status_queue):
         time.sleep(3)
 
         # Click the 'Get backup codes' button or check if codes are already visible
+        # Generate comprehensive multi-language selectors for backup codes button
+        backup_code_texts = MULTI_LANG_TRANSLATIONS['get_backup_codes']
+        backup_text_conditions = []
+        for text in backup_code_texts:
+            backup_text_conditions.extend([
+                f'text()="{text}"',
+                f'contains(text(), "{text}")',
+                f'normalize-space(text())="{text}"',
+                f'contains(normalize-space(text()), "{text}")',
+                f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+            ])
+        
+        backup_combined_condition = ' or '.join(backup_text_conditions)
+        
         get_codes_selectors = [
-            '//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d") and (contains(text(), "Get backup codes") or contains(text(), "Obtenir des codes") or contains(text(), "Backup-Codes abrufen") or contains(text(), "Obtener códigos") or contains(text(), "Получить резервные коды"))]',
-            '//button[.//span[contains(text(), "Get backup codes") or contains(text(), "Obtenir des codes") or contains(text(), "Backup-Codes abrufen") or contains(text(), "Show codes")]]',
-            '//span[contains(@class, "VfPpkd-vQzf8d") and (contains(text(), "Get backup codes") or contains(text(), "Show codes"))]',
-            '//button[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "backup") and contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "code")]'
+            f'//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d") and ({backup_combined_condition})]',
+            f'//button[.//span[{backup_combined_condition}]]',
+            f'//span[contains(@class, "VfPpkd-vQzf8d") and ({backup_combined_condition})]',
+            '//button[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "backup") and contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "code")]',
+            # Language-agnostic selectors as fallback
+            '//button[contains(@class, "VfPpkd-LgbsSe")]',
+            '//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d")]',
+            '//div[@role="button"]',
+            '//button[@type="button"]'
         ]
         
         # First check if backup codes are already visible before trying to click
@@ -345,13 +411,18 @@ def google_automation_worker(email, password, status_queue, stop_event):
             options.add_argument(f"--user-data-dir={temp_dir}")
             options.add_argument("--remote-debugging-port=0")
             
-            # Language and locale for consistency
+            # Language and locale for consistency - support multiple languages
             options.add_argument("--lang=en-US")
             options.add_experimental_option("prefs", {
-                "intl.accept_languages": "en-US,en",
+                "intl.accept_languages": "en-US,en,de,fr,es,it,pt,ru,ja,zh,ko,ar,hi",  # Multi-language support
                 "profile.default_content_setting_values.notifications": 2,
                 "profile.default_content_settings.popups": 0,
-                "profile.managed_default_content_settings.images": 2
+                "profile.managed_default_content_settings.images": 2,
+                # Language-specific settings
+                "translate.enabled": False,  # Disable automatic translation
+                "translate_whitelists": {},
+                "translate_denied_count_for_language": {},
+                "translate.blocked_languages": []
             })
             
             # Set optimal permissions
@@ -601,12 +672,28 @@ def google_automation_worker(email, password, status_queue, stop_event):
         try:
             status_queue.put(("status", f"[{email}] Detecting 2FA setup button"))
             
+            # Generate comprehensive multi-language 2FA button selectors
+            turn_on_texts = MULTI_LANG_TRANSLATIONS['turn_on']
+            turn_on_text_conditions = []
+            for text in turn_on_texts:
+                turn_on_text_conditions.extend([
+                    f'text()="{text}"',
+                    f'contains(text(), "{text}")',
+                    f'normalize-space(text())="{text}"',
+                    f'contains(normalize-space(text()), "{text}")',
+                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+                ])
+            
+            turn_on_combined_condition = ' or '.join(turn_on_text_conditions)
+            
             # Comprehensive 2FA button selectors (language-independent)
             twofa_selectors = [
                 # Original working selector
                 '//*[@id="yDmH0d"]/c-wiz/div/div[2]/div[2]/c-wiz/div/div[1]/div[4]/div[2]/div/div/div/button/span[4]',
-                # Generic button selectors
-                '//button[contains(@class, "VfPpkd-LgbsSe") and .//span[contains(text(), "Turn on") or contains(text(), "Einschalten") or contains(text(), "Activer") or contains(text(), "有効") or contains(text(), "Включить")]]',
+                # Generic button selectors with comprehensive language support
+                f'//button[contains(@class, "VfPpkd-LgbsSe") and .//span[{turn_on_combined_condition}]]',
+                f'//button[{turn_on_combined_condition}]',
+                f'//span[@jsname="V67aGc" and ({turn_on_combined_condition})]',
                 '//button[contains(@jsaction, "click") and contains(.//text(), "2-Step")]',
                 '//div[contains(@class, "VfPpkd-RLmnJb")]//button[contains(@class, "VfPpkd-LgbsSe")]',
                 '//button[@data-value="activate"]',
@@ -699,11 +786,27 @@ def google_automation_worker(email, password, status_queue, stop_event):
             # Smart Next button clicking in phone modal with comprehensive selectors
             status_queue.put(("status", f"[{email}] Looking for Next button in phone modal"))
             
+            # Generate comprehensive multi-language Next button selectors
+            next_texts = MULTI_LANG_TRANSLATIONS['next']
+            next_text_conditions = []
+            for text in next_texts:
+                next_text_conditions.extend([
+                    f'text()="{text}"',
+                    f'contains(text(), "{text}")',
+                    f'normalize-space(text())="{text}"',
+                    f'contains(normalize-space(text()), "{text}")',
+                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+                ])
+            
+            next_combined_condition = ' or '.join(next_text_conditions)
+            
             next_selectors = [
-                # Language-specific text selectors
-                '//button[.//span[@jsname="V67aGc" and (contains(text(), "Next") or contains(text(), "Weiter") or contains(text(), "Suivant") or contains(text(), "次へ") or contains(text(), "Далее") or contains(text(), "Próximo") or contains(text(), "Siguiente"))]]',
+                # Language-specific text selectors with comprehensive coverage
+                f'//button[.//span[@jsname="V67aGc" and ({next_combined_condition})]]',
+                f'//div[@role="dialog"]//button[.//span[{next_combined_condition}]]',
+                f'//button[{next_combined_condition}]',
+                f'//span[@jsname="V67aGc" and ({next_combined_condition})]',
                 # Modal-specific selectors
-                '//div[@role="dialog"]//button[.//span[contains(text(), "Next") or contains(text(), "Weiter") or contains(text(), "Suivant")]]',
                 '//div[contains(@class, "VfPpkd-T0kwCb")]//button[.//span[@jsname="V67aGc"]]',  # Modal container
                 # Generic button selectors in modal context
                 '//button[@data-mdc-dialog-action="next"]',
@@ -738,25 +841,41 @@ def google_automation_worker(email, password, status_queue, stop_event):
                     # Handle "Confirm your phone number" modal with Save button
                     status_queue.put(("status", f"[{email}] Looking for Save button in phone confirmation modal"))
                     
+                    # Generate comprehensive multi-language Save button selectors
+                    save_texts = MULTI_LANG_TRANSLATIONS['save']
+                    save_text_conditions = []
+                    for text in save_texts:
+                        save_text_conditions.extend([
+                            f'text()="{text}"',
+                            f'contains(text(), "{text}")',
+                            f'normalize-space(text())="{text}"',
+                            f'contains(normalize-space(text()), "{text}")',
+                            f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+                        ])
+                    
+                    save_combined_condition = ' or '.join(save_text_conditions)
+                    
                     # Comprehensive Save button selectors for "Confirm your phone number" modal
                     save_selectors = [
                         # Specific Save button with data-mdc-dialog-action
                         '//button[@data-mdc-dialog-action="x8hlje" and @aria-label="Save phone number"]',
                         '//button[@data-mdc-dialog-action="x8hlje"]',
-                        # Generic Save button text patterns (multi-language)
-                        '//button[.//span[contains(text(), "Save") or contains(text(), "Speichern") or contains(text(), "Enregistrer") or contains(text(), "保存") or contains(text(), "Сохранить") or contains(text(), "Salvar") or contains(text(), "Guardar")]]',
+                        # Generic Save button text patterns (comprehensive multi-language)
+                        f'//button[.//span[{save_combined_condition}]]',
+                        f'//button[{save_combined_condition}]',
+                        f'//span[@jsname="V67aGc" and ({save_combined_condition})]',
                         # Modal-specific Save button
-                        '//div[@role="dialog"]//button[.//span[contains(text(), "Save") or contains(text(), "Speichern") or contains(text(), "Enregistrer")]]',
-                        '//div[@aria-modal="true"]//button[.//span[contains(text(), "Save")]]',
+                        f'//div[@role="dialog"]//button[.//span[{save_combined_condition}]]',
+                        f'//div[@aria-modal="true"]//button[.//span[{save_combined_condition}]]',
                         # Save button by class and visibility
-                        '//button[contains(@class, "mUIrbf-LgbsSe") and not(@disabled) and not(contains(@style, "display: none")) and .//span[contains(text(), "Save")]]',
+                        f'//button[contains(@class, "mUIrbf-LgbsSe") and not(@disabled) and not(contains(@style, "display: none")) and .//span[{save_combined_condition}]]',
                         # Data action patterns for Save
                         '//button[contains(@data-mdc-dialog-action, "save") or contains(@data-mdc-dialog-action, "x8hlje")]',
                         # Generic visible button in modal (last resort)
                         '//div[@role="dialog"]//button[not(@disabled) and not(contains(@style, "display: none"))][last()]',
                         '//div[@aria-modal="true"]//button[not(@disabled) and not(contains(@style, "display: none"))][last()]',
                         # JSName-based Save button
-                        '//button[.//span[@jsname="V67aGc" and contains(text(), "Save")]]'
+                        f'//button[.//span[@jsname="V67aGc" and ({save_combined_condition})]]'
                     ]
                     
                     save_button_found = None
@@ -885,9 +1004,25 @@ def google_automation_worker(email, password, status_queue, stop_event):
             app_input.clear()
             app_input.send_keys("AutomationApp")
 
-            # Click Create button using language-independent selectors
+            # Generate comprehensive multi-language Create button selectors
+            create_texts = MULTI_LANG_TRANSLATIONS['create']
+            create_text_conditions = []
+            for text in create_texts:
+                create_text_conditions.extend([
+                    f'text()="{text}"',
+                    f'contains(text(), "{text}")',
+                    f'normalize-space(text())="{text}"',
+                    f'contains(normalize-space(text()), "{text}")',
+                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+                ])
+            
+            create_combined_condition = ' or '.join(create_text_conditions)
+            
+            # Click Create button using comprehensive language-independent selectors
             create_selectors = [
-                '//button[.//span[@jsname="V67aGc" and (text()="Create" or text()="Erstellen" or text()="Créer" or text()="作成" or text()="Создать" or text()="Criar" or text()="Crear")]]',
+                f'//button[.//span[@jsname="V67aGc" and ({create_combined_condition})]]',
+                f'//button[{create_combined_condition}]',
+                f'//span[@jsname="V67aGc" and ({create_combined_condition})]',
                 '//button[@data-action="create"]',
                 '//button[contains(@class, "VfPpkd-LgbsSe") and contains(@class, "VfPpkd-LgbsSe--primary")]',
                 '//button[.//span[@jsname="V67aGc"]]'  # Generic button with jsname span

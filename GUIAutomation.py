@@ -269,6 +269,12 @@ def show_license_window(parent_root):
     license_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
     license_window.grab_set()
     
+    # Ensure window is focused and on top
+    license_window.focus_force()
+    license_window.lift()
+    license_window.attributes('-topmost', True)
+    license_window.after(100, lambda: license_window.attributes('-topmost', False))
+    
     main_frame = ttk.Frame(license_window, padding="20")
     main_frame.pack(fill='both', expand=True)
     
@@ -338,14 +344,30 @@ def show_license_window(parent_root):
     def on_enter(event):
         activate()
     
+    def on_escape(event):
+        safe_exit()
+    
     license_entry.bind('<Return>', on_enter)
+    license_window.bind('<Escape>', on_escape)  # Allow Escape key to exit
     
     # Buttons
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(side='bottom', fill='x', pady=(20, 0))
     
+    def safe_exit():
+        """Safely exit the application"""
+        try:
+            license_window.destroy()
+        except:
+            pass
+        try:
+            parent_root.destroy()
+        except:
+            pass
+        sys.exit(0)
+    
     ttk.Button(button_frame, text="Activate", command=activate).pack(side='right')
-    ttk.Button(button_frame, text="Exit", command=sys.exit).pack(side='right', padx=(0, 10))
+    ttk.Button(button_frame, text="Exit", command=safe_exit).pack(side='right', padx=(0, 10))
     
     # Instructions
     instructions = ttk.Label(main_frame, 
@@ -353,7 +375,7 @@ def show_license_window(parent_root):
                            justify='left', foreground='gray')
     instructions.pack(side='bottom', anchor='w', pady=(10, 0))
     
-    license_window.protocol("WM_DELETE_WINDOW", sys.exit)
+    license_window.protocol("WM_DELETE_WINDOW", safe_exit)
     license_window.wait_window()
     
     return activation_result['success']
@@ -833,14 +855,14 @@ def save_app_password(email, password, app_password, backup_codes=None):
         with open("successful_accounts.csv", mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["Email", "Password", "App Password", "Backup Code 1", "Backup Code 2", "Generated At"])
+                writer.writerow(["Email", "Password", "App Password", "Backup Code 1", "Backup Code 2"])
             
             # Ensure we have 2 backup codes or empty strings
             code1 = backup_codes[0] if backup_codes and len(backup_codes) > 0 else ""
             code2 = backup_codes[1] if backup_codes and len(backup_codes) > 1 else ""
             
-            # Write immediately to CSV with explicit flush
-            writer.writerow([email, password, app_password, code1, code2, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+            # Write immediately to CSV without timestamp
+            writer.writerow([email, password, app_password, code1, code2])
             f.flush()  # Force immediate write to disk
             os.fsync(f.fileno())  # Ensure data is written to disk immediately
             
@@ -848,8 +870,7 @@ def save_app_password(email, password, app_password, backup_codes=None):
         return {
             'email': email,
             'app_password': app_password,
-            'backup_codes': [code1, code2] if code1 or code2 else [],
-            'saved_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'backup_codes': [code1, code2] if code1 or code2 else []
         }
 
 def save_failed_account(email, password, reason):
@@ -859,8 +880,8 @@ def save_failed_account(email, password, reason):
         with open("failed_accounts.csv", mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["Email", "Password", "Failure Reason", "Failed At"])
-            writer.writerow([email, password, reason, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                writer.writerow(["Email", "Password", "Failure Reason"])
+            writer.writerow([email, password, reason])
 
 def google_automation_worker(email, password, status_queue, stop_event):
     """Worker function for Google automation running in a separate thread"""
@@ -1048,7 +1069,12 @@ def google_automation_worker(email, password, status_queue, stop_event):
 
         # Step 1: Smart navigation to Google login
         if stop_event.is_set():
-            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+            except:
+                pass
             return
             
         status_queue.put(("status", f"[{email}] Smart navigation to Google login"))
@@ -1098,7 +1124,12 @@ def google_automation_worker(email, password, status_queue, stop_event):
 
         # Step 2: Smart email entry with validation
         if stop_event.is_set():
-            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+            except:
+                pass
             return
             
         status_queue.put(("status", f"[{email}] Smart email entry"))
@@ -1144,12 +1175,25 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] Email entry failed: {e}"))
             save_failed_account(email, password, f"Email entry failed: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual email entry"))
+            
+            # Close browser immediately after email failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after email entry failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after email failure"))
+            except:
+                pass
             return
 
         # Step 3: Smart password entry with multiple strategies
         if stop_event.is_set():
-            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+            try:
+                if driver:
+                    driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+            except:
+                pass
             return
             
         status_queue.put(("status", f"[{email}] Smart password entry"))
@@ -1204,7 +1248,14 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] Password entry failed: {e}"))
             save_failed_account(email, password, f"Password entry failed: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual password entry"))
+            
+            # Close browser immediately after password failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after password failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after password failure"))
+            except:
+                pass
             return
 
         # Step 4: Smart login verification
@@ -1246,12 +1297,24 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] Login verification failed: {e}"))
             save_failed_account(email, password, f"Login verification failed: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual login verification"))
+            
+            # Close browser immediately after login verification failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after login verification failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after login failure"))
+            except:
+                pass
             return
 
         # Step 5: Smart 2FA navigation
         if stop_event.is_set():
-            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+            except:
+                pass
             return
             
         status_queue.put(("status", f"[{email}] Smart navigation to 2FA settings"))
@@ -1330,13 +1393,25 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] 2FA button detection failed: {e}"))
             save_failed_account(email, password, f"2FA button not found: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual 2FA setup"))
+            
+            # Close browser immediately after 2FA failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after 2FA setup failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after 2FA failure"))
+            except:
+                pass
             return
 
         # Step 7: Smart phone number entry with intelligent generation
         try:
             if stop_event.is_set():
-                status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+                status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+                except:
+                    pass
                 return
                 
             status_queue.put(("status", f"[{email}] Smart phone number entry"))
@@ -1541,12 +1616,24 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] Phone number entry and confirmation failed: {e}"))
             save_failed_account(email, password, f"Phone number entry failed: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual debugging"))
+            
+            # Close browser immediately after phone number failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after phone number failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after phone failure"))
+            except:
+                pass
             return
 
         # Skip "You're now protected" modal - Direct navigation to app passwords
         if stop_event.is_set():
-            status_queue.put(("status", f"[{email}] Stopped - Browser left open"))
+            status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after stop"))
+            except:
+                pass
             return
             
         status_queue.put(("status", f"[{email}] Skipping 2FA completion modal - navigating directly to App Passwords"))
@@ -1586,7 +1673,14 @@ def google_automation_worker(email, password, status_queue, stop_event):
         except Exception as e:
             status_queue.put(("error", f"[{email}] App Passwords navigation failed: {e}"))
             save_failed_account(email, password, f"App Passwords navigation failed: {e}")
-            status_queue.put(("status", f"[{email}] Browser left open for manual navigation"))
+            
+            # Close browser immediately after navigation failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after navigation failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after navigation failure"))
+            except:
+                pass
             return
 
         # Step 8: Create app password
@@ -1647,7 +1741,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 modal = finder.wait.until(EC.visibility_of_element_located((By.XPATH, '//div[@class="uW2Fw-P5QLlc" and @aria-modal="true"]')))
                 strong = modal.find_element(By.XPATH, './/strong[@class="v2CTKd KaSAf"]')
                 spans = strong.find_elements(By.TAG_NAME, 'span')
-                app_password = ''.join([span.text for span in spans]).replace(' ', '')
+                app_password = ''.join([span.text for span in spans])  # Keep spaces exactly as shown
                 status_queue.put(("success", f"[{email}] 🔑 Generated app password: {app_password}"))
                 
                 # Collect backup codes after getting app password
@@ -1660,29 +1754,72 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 # Confirm immediate save success with details
                 backup_count = len(backup_codes) if backup_codes else 0
                 status_queue.put(("success", f"[{email}] ✅ SAVED IMMEDIATELY: App password + {backup_count} backup codes written to CSV"))
-                status_queue.put(("success", f"[{email}] 📝 File: successful_accounts.csv | Time: {save_result['saved_at']}"))
+                status_queue.put(("success", f"[{email}] 📝 File: successful_accounts.csv"))
                 status_queue.put(("update_status", (email, 'Success - Saved')))
+                
+                # Close browser immediately and proceed to next
+                status_queue.put(("status", f"[{email}] 🔄 Closing browser and proceeding to next account..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed successfully"))
+                except:
+                    pass
                 
             except Exception as e:
                 status_queue.put(("error", f"[{email}] Could not extract app password: {e}"))
                 save_failed_account(email, password, f"Could not extract app password: {e}")
                 status_queue.put(("update_status", (email, 'Failed')))
+                
+                # Close browser immediately after failure and proceed to next
+                status_queue.put(("status", f"[{email}] 🔄 Closing browser after failure and proceeding to next account..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed after failure"))
+                except:
+                    pass
 
         except Exception as e:
             status_queue.put(("error", f"[{email}] App password creation failed: {e}"))
             save_failed_account(email, password, f"App password creation failed: {e}")
+            
+            # Close browser immediately after app password failure
+            status_queue.put(("status", f"[{email}] 🔄 Closing browser after app password failure..."))
+            try:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after app password failure"))
+            except:
+                pass
 
-        # Mark automation as completed successfully
-        status_queue.put(("status", f"[{email}] ✅ Automation completed successfully - Browser left open for review"))
+        # Mark automation as completed successfully and close browser
+        status_queue.put(("status", f"[{email}] ✅ Automation completed successfully - Closing browser..."))
+        try:
+            driver.quit()
+            status_queue.put(("success", f"[{email}] ✅ Browser closed after successful completion"))
+        except:
+            pass
         status_queue.put(("completed", email))
 
     except Exception as e:
         status_queue.put(("error", f"[{email}] Automation failed: {e}"))
         save_failed_account(email, password, f"Automation failed: {e}")
-        # Keep browser open even on error for manual inspection
-        if driver is not None:
-            status_queue.put(("status", f"[{email}] Browser left open for manual review/correction"))
+        
+        # Close browser immediately after any error
+        status_queue.put(("status", f"[{email}] 🔄 Closing browser after error and proceeding to next account..."))
+        try:
+            if driver is not None:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser closed after error"))
+        except:
+            pass
     finally:
+        # CRITICAL: Always close browser, even on unexpected errors
+        try:
+            if 'driver' in locals() and driver is not None:
+                driver.quit()
+                status_queue.put(("success", f"[{email}] ✅ Browser cleanup completed"))
+        except:
+            pass
+            
         # Clean up temporary directory
         if temp_dir and os.path.exists(temp_dir):
             try:
@@ -2086,13 +2223,19 @@ def main():
             
             if not activation_result:
                 print("License activation cancelled or failed. Exiting...")
-                root.destroy()
+                try:
+                    root.destroy()
+                except:
+                    pass
                 sys.exit(1)
         except Exception as e:
             print(f"Error showing license window: {e}")
             import traceback
             traceback.print_exc()
-            root.destroy()
+            try:
+                root.destroy()
+            except:
+                pass
             sys.exit(1)
         
         # Re-validate after activation
@@ -2105,7 +2248,10 @@ def main():
         
         if not (valid1 and valid2):
             print("License activation verification failed. Exiting...")
-            root.destroy()
+            try:
+                root.destroy()
+            except:
+                pass
             sys.exit(1)
     
     # Mark protection as active (after successful license validation)

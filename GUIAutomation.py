@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import csv
 import time
 import os
+import sys
 import threading
 import queue
 import tempfile
@@ -10,6 +11,22 @@ import shutil
 import atexit
 from datetime import datetime
 from selenium import webdriver
+# License system imports
+import hashlib
+import uuid
+import platform
+import hmac
+import requests
+import subprocess
+from base64 import b64encode, b64decode
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad, unpad
+except ImportError as e:
+    print("License system requires pycryptodome. Install with: pip install pycryptodome")
+    print(f"Import error: {e}")
+    sys.exit(1)
+import logging
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
@@ -21,6 +38,482 @@ from selenium.webdriver.common.action_chains import ActionChains
 import random
 import json
 from urllib.parse import urlparse
+
+# ======================== LICENSE SYSTEM CONSTANTS ========================
+# ⚠️ IMPORTANT: Configure these settings before deployment
+LICENSE_SERVER_URL = "https://algolizen.com/activationserver"  # Your actual server URL
+ACTIVATION_ENDPOINT = f"{LICENSE_SERVER_URL}/activate"  # Correct activation endpoint
+VALIDATION_ENDPOINT = f"{LICENSE_SERVER_URL}/activate"  # Use same endpoint for validation
+
+# ⚠️ SECURITY CRITICAL: Replace with your actual 32-byte secret key (base64 encoded recommended)
+SECRET_KEY = b"REPLACE-WITH-YOUR-32-BYTE-SECRET"  # Must be exactly 32 bytes
+HMAC_KEY = b"REPLACE-WITH-YOUR-HMAC-SECRET-KEY"  # Your HMAC secret for signatures
+
+# Example of proper key generation (run once, then use the generated keys):
+# import os
+# import base64
+# SECRET_KEY = base64.b64encode(os.urandom(32))
+# HMAC_KEY = base64.b64encode(os.urandom(32))
+# print(f"SECRET_KEY = {SECRET_KEY}")
+# print(f"HMAC_KEY = {HMAC_KEY}")
+
+# ======================== LICENSE SYSTEM FUNCTIONS ========================
+def get_hardware_id():
+    """Generate a unique hardware identifier based on multiple system characteristics"""
+    try:
+        # Get MAC address (most stable)
+        mac = uuid.getnode()
+        mac_hex = f"{mac:012x}"
+        
+        # Get processor info
+        try:
+            if platform.system() == "Windows":
+                result = subprocess.run(['wmic', 'cpu', 'get', 'ProcessorId', '/format:list'], 
+                                      capture_output=True, text=True, timeout=10)
+                processor_id = ""
+                for line in result.stdout.split('\n'):
+                    if 'ProcessorId=' in line:
+                        processor_id = line.split('=')[1].strip()
+                        break
+            else:
+                processor_id = platform.processor()
+        except:
+            processor_id = platform.machine()
+        
+        # Get disk serial (when available)
+        disk_serial = ""
+        try:
+            if platform.system() == "Windows":
+                result = subprocess.run(['wmic', 'diskdrive', 'get', 'SerialNumber', '/format:list'], 
+                                      capture_output=True, text=True, timeout=10)
+                for line in result.stdout.split('\n'):
+                    if 'SerialNumber=' in line and line.split('=')[1].strip():
+                        disk_serial = line.split('=')[1].strip()
+                        break
+        except:
+            pass
+        
+        # Combine all identifiers
+        hardware_string = f"{mac_hex}_{processor_id}_{disk_serial}_{platform.system()}"
+        
+        # Create SHA-256 hash
+        hardware_hash = hashlib.sha256(hardware_string.encode()).hexdigest()
+        
+        return hardware_hash[:24]  # Return first 24 characters for readability
+        
+    except Exception as e:
+        print(f"Error generating hardware ID: {e}")
+        # Fallback to MAC address only
+        mac = uuid.getnode()
+        return hashlib.sha256(f"{mac:012x}".encode()).hexdigest()[:24]
+
+def encrypt_license(license_data):
+    """Encrypt license data using AES"""
+    try:
+        cipher = AES.new(SECRET_KEY, AES.MODE_CBC)
+        padded_data = pad(license_data.encode(), AES.block_size)
+        encrypted = cipher.encrypt(padded_data)
+        return b64encode(cipher.iv + encrypted).decode()
+    except Exception as e:
+        print(f"Encryption error: {e}")
+        return None
+
+def decrypt_license(encrypted_license):
+    """Decrypt license data"""
+    try:
+        encrypted_data = b64decode(encrypted_license.encode())
+        iv = encrypted_data[:16]
+        ciphertext = encrypted_data[16:]
+        cipher = AES.new(SECRET_KEY, AES.MODE_CBC, iv)
+        decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+        return decrypted.decode()
+    except Exception as e:
+        print(f"Decryption error: {e}")
+        return None
+
+def generate_signature(data, key=HMAC_KEY):
+    """Generate HMAC signature for data integrity"""
+    return hmac.new(key, data.encode(), hashlib.sha256).hexdigest()
+
+def verify_signature(data, signature, key=HMAC_KEY):
+    """Verify HMAC signature"""
+    expected = generate_signature(data, key)
+    return hmac.compare_digest(expected, signature)
+
+def validate_license_key(license_key, hardware_id):
+    """Validate license key against hardware ID and server"""
+    try:
+        # First check if license file exists
+        license_file = "license.dat"
+        if os.path.exists(license_file):
+            with open(license_file, 'r') as f:
+                stored_data = f.read().strip()
+                if stored_data:
+                    decrypted = decrypt_license(stored_data)
+                    if decrypted:
+                        license_info = json.loads(decrypted)
+                        if license_info.get('hardware_id') == hardware_id:
+                            return True, "License validated from local storage"
+        
+        # Skip online validation if no license key provided (initial check)
+        if not license_key:
+            return False, "No license key provided for validation"
+        
+        # Online validation - match server.js format
+        payload = {
+            'hardware_id': hardware_id,
+            'license_key': license_key
+        }
+        
+        print(f"[DEBUG] Validating license with server: {VALIDATION_ENDPOINT}")
+        print(f"[DEBUG] Payload: {payload}")
+        
+        try:
+            response = requests.post(VALIDATION_ENDPOINT, json=payload, timeout=10)
+            print(f"[DEBUG] Server response status: {response.status_code}")
+            print(f"[DEBUG] Server response headers: {dict(response.headers)}")
+            print(f"[DEBUG] Server response text: {response.text}")
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('status') == 'ok':
+                    # Save license locally
+                    license_data = {
+                        'license_key': license_key,
+                        'hardware_id': hardware_id,
+                        'validated': True,
+                        'timestamp': int(time.time())
+                    }
+                    encrypted_license = encrypt_license(json.dumps(license_data))
+                    if encrypted_license:
+                        with open(license_file, 'w') as f:
+                            f.write(encrypted_license)
+                    return True, "License validated successfully"
+                else:
+                    return False, result.get('message', 'Invalid license key')
+            else:
+                error_msg = response.text if response.text else f"HTTP {response.status_code}"
+                return False, f"Server error: {error_msg}"
+        except requests.RequestException as e:
+            print(f"[DEBUG] Network error: {e}")
+            # Offline mode - check local license
+            if os.path.exists(license_file):
+                return True, "Using cached license (offline mode)"
+            return False, f"No internet connection and no cached license found. Network error: {e}"
+            
+    except Exception as e:
+        print(f"[DEBUG] License validation error: {e}")
+        return False, f"License validation error: {e}"
+
+def activate_license(license_key, hardware_id):
+    """Activate license key with the server"""
+    try:
+        # Match server.js expected format
+        payload = {
+            'hardware_id': hardware_id,
+            'license_key': license_key
+        }
+        
+        print(f"[DEBUG] Activating license with server: {ACTIVATION_ENDPOINT}")
+        print(f"[DEBUG] Payload: {payload}")
+        
+        response = requests.post(ACTIVATION_ENDPOINT, json=payload, timeout=10)
+        
+        print(f"[DEBUG] Activation response status: {response.status_code}")
+        print(f"[DEBUG] Activation response headers: {dict(response.headers)}")
+        print(f"[DEBUG] Activation response text: {response.text}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'ok':
+                # Save license locally
+                license_data = {
+                    'license_key': license_key,
+                    'hardware_id': hardware_id,
+                    'activated': True,
+                    'timestamp': int(time.time())
+                }
+                encrypted_license = encrypt_license(json.dumps(license_data))
+                if encrypted_license:
+                    with open("license.dat", 'w') as f:
+                        f.write(encrypted_license)
+                return True, result.get('message', 'License activated successfully')
+            else:
+                return False, result.get('message', 'Activation failed')
+        else:
+            error_msg = response.text if response.text else f"HTTP {response.status_code}"
+            return False, f"Server error: {error_msg}"
+            
+    except requests.RequestException as e:
+        print(f"[DEBUG] Network error during activation: {e}")
+        return False, f"Network error during activation: {e}"
+    except Exception as e:
+        print(f"[DEBUG] Activation error: {e}")
+        return False, f"Activation error: {e}"
+
+def show_license_window(parent_root):
+    """Show license activation window"""
+    license_window = tk.Toplevel(parent_root)
+    license_window.title("License Activation Required")
+    license_window.resizable(False, False)
+    
+    # Calculate center position BEFORE showing the window
+    window_width = 500
+    window_height = 400
+    screen_width = license_window.winfo_screenwidth()
+    screen_height = license_window.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    
+    # Set geometry with position immediately
+    license_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    license_window.grab_set()
+    
+    main_frame = ttk.Frame(license_window, padding="20")
+    main_frame.pack(fill='both', expand=True)
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="License Activation", 
+                           font=('Arial', 16, 'bold'))
+    title_label.pack(pady=(0, 20))
+    
+    # Hardware ID display
+    hardware_id = get_hardware_id()
+    ttk.Label(main_frame, text="Your Hardware ID:", 
+             font=('Arial', 10, 'bold')).pack(anchor='w')
+    
+    hw_frame = ttk.Frame(main_frame)
+    hw_frame.pack(fill='x', pady=(5, 15))
+    
+    hw_entry = ttk.Entry(hw_frame, font=('Courier', 10))
+    hw_entry.insert(0, hardware_id)
+    hw_entry.config(state='readonly')
+    hw_entry.pack(side='left', fill='x', expand=True)
+    
+    def copy_hardware_id():
+        license_window.clipboard_clear()
+        license_window.clipboard_append(hardware_id)
+        messagebox.showinfo("Copied", "Hardware ID copied to clipboard")
+    
+    ttk.Button(hw_frame, text="Copy", command=copy_hardware_id).pack(side='right', padx=(5, 0))
+    
+    # License key entry
+    ttk.Label(main_frame, text="Enter your license key:", 
+             font=('Arial', 10, 'bold')).pack(anchor='w', pady=(10, 5))
+    
+    license_entry = ttk.Entry(main_frame, font=('Arial', 12), width=50)
+    license_entry.pack(fill='x', pady=(0, 15))
+    license_entry.focus()
+    
+    # Status label
+    status_label = ttk.Label(main_frame, text="", foreground='red')
+    status_label.pack(pady=(0, 10))
+    
+    # Result variable
+    activation_result = {'success': False}
+    
+    def activate():
+        license_key = license_entry.get().strip()
+        if not license_key:
+            status_label.config(text="Please enter a license key", foreground='red')
+            return
+        
+        status_label.config(text="Activating license...", foreground='blue')
+        license_window.update()
+        
+        # Try activation first
+        success, message = activate_license(license_key, hardware_id)
+        
+        if not success:
+            # Try validation if activation fails
+            success, message = validate_license_key(license_key, hardware_id)
+        
+        if success:
+            status_label.config(text=message, foreground='green')
+            activation_result['success'] = True
+            license_window.after(1500, license_window.destroy)
+        else:
+            status_label.config(text=message, foreground='red')
+    
+    def on_enter(event):
+        activate()
+    
+    license_entry.bind('<Return>', on_enter)
+    
+    # Buttons
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(side='bottom', fill='x', pady=(20, 0))
+    
+    ttk.Button(button_frame, text="Activate", command=activate).pack(side='right')
+    ttk.Button(button_frame, text="Exit", command=sys.exit).pack(side='right', padx=(0, 10))
+    
+    # Instructions
+    instructions = ttk.Label(main_frame, 
+                           text="Instructions:\n1. Copy your Hardware ID\n2. Contact support to get your license key\n3. Enter the license key and click Activate",
+                           justify='left', foreground='gray')
+    instructions.pack(side='bottom', anchor='w', pady=(10, 0))
+    
+    license_window.protocol("WM_DELETE_WINDOW", sys.exit)
+    license_window.wait_window()
+    
+    return activation_result['success']
+
+def periodic_license_check():
+    """Periodically check license validity (runs in background)"""
+    def check_license():
+        while True:
+            try:
+                hardware_id = get_hardware_id()
+                valid, _ = validate_license_key("", hardware_id)
+                if not valid:
+                    # License became invalid, exit application
+                    os._exit(1)
+                time.sleep(1800)  # Check every 30 minutes
+            except:
+                time.sleep(1800)
+    
+    thread = threading.Thread(target=check_license, daemon=True)
+    thread.start()
+
+# Obfuscated license validation (makes reverse engineering harder)
+def _0x4c1c3ns3_ch3ck():
+    """Obfuscated license check - DO NOT REMOVE"""
+    try:
+        hw_id = get_hardware_id()
+        license_file = "license.dat"
+        if not os.path.exists(license_file):
+            return False
+        with open(license_file, 'r') as f:
+            encrypted_data = f.read().strip()
+        if not encrypted_data:
+            return False
+        decrypted = decrypt_license(encrypted_data)
+        if not decrypted:
+            return False
+        license_info = json.loads(decrypted)
+        return license_info.get('hardware_id') == hw_id and license_info.get('activated', False)
+    except:
+        return False
+
+# Runtime integrity check
+def _verify_app_integrity():
+    """Verify application hasn't been tampered with"""
+    try:
+        # Check if critical functions exist
+        critical_functions = ['get_hardware_id', 'validate_license_key', '_0x4c1c3ns3_ch3ck']
+        for func_name in critical_functions:
+            if func_name not in globals():
+                os._exit(1)
+        
+        # Check if license file manipulation attempts
+        if hasattr(sys.modules[__name__], '_license_bypassed'):
+            os._exit(1)
+            
+        # Verify hardware ID consistency
+        hw1 = get_hardware_id()
+        time.sleep(0.1)
+        hw2 = get_hardware_id()
+        if hw1 != hw2:
+            os._exit(1)
+            
+        return True
+    except:
+        os._exit(1)
+
+# License file protection
+def _protect_license_file():
+    """Add protection against license file deletion"""
+    def check_license_file():
+        # Wait a bit before starting protection (allow activation window to show)
+        time.sleep(60)  # Give 60 seconds for activation
+        
+        while True:
+            try:
+                if os.path.exists("license.dat"):
+                    # Verify license file integrity
+                    with open("license.dat", 'r') as f:
+                        content = f.read().strip()
+                    if not content or len(content) < 50:  # Minimum expected encrypted content length
+                        print("License file appears corrupted. Application will exit.")
+                        time.sleep(5)  # Give user time to see message
+                        os._exit(1)
+                else:
+                    # Only exit if we've been running for a while (not during initial activation)
+                    if hasattr(_protect_license_file, 'protection_active'):
+                        print("License file was deleted during runtime. Application will exit.")
+                        time.sleep(2)
+                        os._exit(1)
+                time.sleep(30)  # Check every 30 seconds
+            except:
+                if hasattr(_protect_license_file, 'protection_active'):
+                    os._exit(1)
+                time.sleep(30)
+    
+    thread = threading.Thread(target=check_license_file, daemon=True)
+    thread.start()
+
+# Anti-debugging check
+def _anti_debug_check():
+    """Basic anti-debugging measures"""
+    try:
+        import psutil
+        # Check for common debugging processes
+        suspicious_processes = ['ida', 'ollydbg', 'x64dbg', 'windbg', 'cheatengine', 'processhacker']
+        for proc in psutil.process_iter(['name']):
+            try:
+                proc_name = proc.info['name'].lower()
+                if any(debug_tool in proc_name for debug_tool in suspicious_processes):
+                    os._exit(1)
+            except:
+                pass
+    except ImportError:
+        # psutil not available, skip check
+        pass
+
+# Obfuscated license validation (makes reverse engineering harder)
+def _0x4c1c3ns3_ch3ck():
+    """Obfuscated license check - DO NOT REMOVE"""
+    try:
+        hw_id = get_hardware_id()
+        license_file = "license.dat"
+        if not os.path.exists(license_file):
+            return False
+        with open(license_file, 'r') as f:
+            encrypted_data = f.read().strip()
+        if not encrypted_data:
+            return False
+        decrypted = decrypt_license(encrypted_data)
+        if not decrypted:
+            return False
+        license_info = json.loads(decrypted)
+        return license_info.get('hardware_id') == hw_id and license_info.get('activated', False)
+    except:
+        return False
+
+# Runtime integrity check
+def _verify_app_integrity():
+    """Verify application hasn't been tampered with"""
+    try:
+        # Check if critical functions exist
+        critical_functions = ['get_hardware_id', 'validate_license_key', '_0x4c1c3ns3_ch3ck']
+        for func_name in critical_functions:
+            if func_name not in globals():
+                os._exit(1)
+        
+        # Check if license file manipulation attempts
+        if hasattr(sys.modules[__name__], '_license_bypassed'):
+            os._exit(1)
+            
+        # Verify hardware ID consistency
+        hw1 = get_hardware_id()
+        time.sleep(0.1)
+        hw2 = get_hardware_id()
+        if hw1 != hw2:
+            os._exit(1)
+            
+        return True
+    except:
+        os._exit(1)
 
 # Smart element detection class
 class SmartElementFinder:
@@ -371,6 +864,11 @@ def save_failed_account(email, password, reason):
 
 def google_automation_worker(email, password, status_queue, stop_event):
     """Worker function for Google automation running in a separate thread"""
+    # CRITICAL: License validation before starting automation
+    if not _0x4c1c3ns3_ch3ck():
+        status_queue.put(("error", f"[{email}] ❌ License validation failed"))
+        return
+    
     try:
         if stop_event.is_set():
             return
@@ -1194,10 +1692,28 @@ def google_automation_worker(email, password, status_queue, stop_event):
 
 class GoogleAutomationGUI:
     def __init__(self, root):
+        # CRITICAL: License validation at GUI initialization
+        if not _0x4c1c3ns3_ch3ck():
+            messagebox.showerror("License Error", "Invalid or expired license. Please restart the application.")
+            sys.exit(1)
+        
+        # Additional integrity check
+        _verify_app_integrity()
+        
         self.root = root
         self.root.title("Google Account Automation Tool")
-        self.root.geometry("800x600")
         self.root.configure(bg='#f0f0f0')
+        
+        # Calculate center position BEFORE setting geometry
+        window_width = 800
+        window_height = 600
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        
+        # Set geometry with center position immediately
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
         self.accounts = []
         self.worker_threads = []
@@ -1354,6 +1870,11 @@ class GoogleAutomationGUI:
             self.log_message(f"❌ Error loading accounts: {e}")
     
     def start_automation(self):
+        # CRITICAL: License check before starting automation
+        if not _0x4c1c3ns3_ch3ck():
+            messagebox.showerror("License Error", "License validation failed. Please restart the application.")
+            sys.exit(1)
+        
         if not self.accounts:
             messagebox.showwarning("No Accounts", "Please load accounts first.")
             return
@@ -1531,7 +2052,88 @@ class GoogleAutomationGUI:
         self.root.after(100, self.check_queue)
 
 def main():
+    # ======================== SECURITY INITIALIZATION ========================
+    # Anti-debugging check
+    _anti_debug_check()
+    
+    # Anti-tampering check
+    _verify_app_integrity()
+    
+    # Create hidden root window first
     root = tk.Tk()
+    root.withdraw()  # Hide the main window initially
+    
+    # ======================== LICENSE CHECK ========================
+    # Check license before starting the application
+    hardware_id = get_hardware_id()
+    print(f"Hardware ID: {hardware_id}")
+    
+    # Multiple validation layers
+    valid1, message1 = validate_license_key("", hardware_id)
+    valid2 = _0x4c1c3ns3_ch3ck()
+    
+    print(f"License validation 1: {valid1} ({message1})")
+    print(f"License validation 2: {valid2}")
+    
+    if not (valid1 and valid2):
+        # No valid license found, show activation window
+        print("No valid license found. Opening license activation window...")
+        print("Please wait while the license activation window loads...")
+        
+        try:
+            activation_result = show_license_window(root)
+            print(f"Activation window result: {activation_result}")
+            
+            if not activation_result:
+                print("License activation cancelled or failed. Exiting...")
+                root.destroy()
+                sys.exit(1)
+        except Exception as e:
+            print(f"Error showing license window: {e}")
+            import traceback
+            traceback.print_exc()
+            root.destroy()
+            sys.exit(1)
+        
+        # Re-validate after activation
+        print("Re-validating license after activation...")
+        valid1, _ = validate_license_key("", hardware_id)
+        valid2 = _0x4c1c3ns3_ch3ck()
+        
+        print(f"Re-validation 1: {valid1}")
+        print(f"Re-validation 2: {valid2}")
+        
+        if not (valid1 and valid2):
+            print("License activation verification failed. Exiting...")
+            root.destroy()
+            sys.exit(1)
+    
+    # Mark protection as active (after successful license validation)
+    _protect_license_file.protection_active = True
+    
+    # Start license file protection (now that we have a valid license)
+    _protect_license_file()
+    
+    # Start periodic license checking in background
+    periodic_license_check()
+    
+    # ======================== START APPLICATION ========================
+    print("License validated. Starting Google Account Automation Tool...")
+    
+    # Show the main window now
+    root.deiconify()  # Show the hidden root window
+    
+    # Additional runtime check
+    def runtime_license_check():
+        _verify_app_integrity()  # Continuous integrity checking
+        if not _0x4c1c3ns3_ch3ck():
+            messagebox.showerror("License Error", "License validation failed during runtime.")
+            os._exit(1)
+        root.after(60000, runtime_license_check)  # Check every minute
+    
+    # Start runtime checking
+    root.after(60000, runtime_license_check)
+    
     app = GoogleAutomationGUI(root)
     root.mainloop()
 

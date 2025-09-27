@@ -177,31 +177,30 @@ def collect_backup_codes(driver, finder, email, status_queue):
         time.sleep(3)
 
         # Click the 'Get backup codes' button or check if codes are already visible
-        # Generate comprehensive multi-language selectors for backup codes button
-        backup_code_texts = MULTI_LANG_TRANSLATIONS['get_backup_codes']
-        backup_text_conditions = []
-        for text in backup_code_texts:
-            backup_text_conditions.extend([
-                f'text()="{text}"',
-                f'contains(text(), "{text}")',
-                f'normalize-space(text())="{text}"',
-                f'contains(normalize-space(text()), "{text}")',
-                f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
-            ])
-        
-        backup_combined_condition = ' or '.join(backup_text_conditions)
-        
+        # ENGLISH-ONLY backup codes button selectors (PRIMARY - Language forced to English)
         get_codes_selectors = [
-            f'//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d") and ({backup_combined_condition})]',
-            f'//button[.//span[{backup_combined_condition}]]',
-            f'//span[contains(@class, "VfPpkd-vQzf8d") and ({backup_combined_condition})]',
-            '//button[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "backup") and contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "code")]',
-            # Language-agnostic selectors as fallback
-            '//button[contains(@class, "VfPpkd-LgbsSe")]',
+            # ENGLISH-FIRST SELECTORS - These should ALWAYS work with language forcing
+            '//span[@jsname="V67aGc" and text()="Get backup codes"]',
+            '//button[.//span[text()="Get backup codes"]]',
+            '//button[text()="Get backup codes"]',
+            '//span[text()="Get backup codes"]',
+            '//button[contains(text(), "Get backup codes")]',
+            '//span[contains(text(), "Get backup codes")]',
+            '//button[contains(text(), "backup codes")]',
+            '//span[contains(text(), "backup codes")]',
+            
+            # STRUCTURAL SELECTORS (no text dependency)
             '//span[@jsname="V67aGc" and contains(@class, "AeBiU-vQzf8d")]',
+            '//button[contains(@class, "VfPpkd-LgbsSe")]',
             '//div[@role="button"]',
             '//button[@type="button"]'
         ]
+        
+        # EMERGENCY FALLBACK - Multi-language (should NOT be needed)
+        if len(get_codes_selectors) < 15:  # Add fallbacks only if needed
+            backup_code_texts = MULTI_LANG_TRANSLATIONS['get_backup_codes']
+            for text in backup_code_texts[1:3]:  # Only add first 3 fallback languages
+                get_codes_selectors.append(f'//button[.//span[contains(text(), "{text}")]]')
         
         # First check if backup codes are already visible before trying to click
         status_queue.put(("status", f"[{email}] Checking if backup codes are already visible"))
@@ -377,6 +376,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
             return
             
         status_queue.put(("status", f"Starting automation for {email}"))
+        status_queue.put(("status", f"[{email}] 🌐 Language forcing enabled - Browser will use English interface"))
         
         # Enhanced Chrome options for speed and reliability
         temp_dir = None
@@ -422,18 +422,45 @@ def google_automation_worker(email, password, status_queue, stop_event):
             options.add_argument(f"--user-data-dir={temp_dir}")
             options.add_argument("--remote-debugging-port=0")
             
-            # Language and locale for consistency - support multiple languages
+            # AGGRESSIVE LANGUAGE FORCING - ENGLISH ONLY - NO EXCEPTIONS
             options.add_argument("--lang=en-US")
+            options.add_argument("--accept-lang=en-US,en;q=1.0")
+            options.add_argument("--accept-language=en-US,en;q=1.0")
+            options.add_argument("--disable-translate")
+            options.add_argument("--disable-extensions-http-throttling")
+            options.add_argument("--disable-locale-switching-bho")
+            
+            # FORCE ALL GOOGLE SERVICES TO ENGLISH
             options.add_experimental_option("prefs", {
-                "intl.accept_languages": "en-US,en,de,fr,es,it,pt,ru,ja,zh,ko,ar,hi",  # Multi-language support
-                "profile.default_content_setting_values.notifications": 2,
-                "profile.default_content_settings.popups": 0,
-                "profile.managed_default_content_settings.images": 2,
-                # Language-specific settings
-                "translate.enabled": False,  # Disable automatic translation
+                # PRIMARY LANGUAGE FORCING
+                "intl.accept_languages": "en-US,en",
+                "intl.selected_language": "en-US", 
+                "intl.charset_default": "UTF-8",
+                "intl.locale_matching": "lookup",
+                
+                # DISABLE ALL TRANSLATION
+                "translate.enabled": False,
                 "translate_whitelists": {},
                 "translate_denied_count_for_language": {},
-                "translate.blocked_languages": []
+                "translate.blocked_languages": ["*"],
+                "translate_site_blacklist_with_time": {},
+                "translate_accepted_count_for_language": {},
+                "translate_ranker_model_url": "",
+                "translate_ranker_model_version": 0,
+                
+                # FORCE GOOGLE TO ENGLISH
+                "google.services.language": "en-US",
+                "google.services.country": "US",
+                "google.services.tld": "com",
+                
+                # BROWSER INTERFACE ENGLISH
+                "browser.enable_spellchecking": False,
+                "spellcheck.dictionary": "en-US",
+                "spellcheck.use_spelling_service": False,
+                "browser.language": "en-US",
+                "profile.default_content_setting_values.notifications": 2,
+                "profile.default_content_settings.popups": 0,
+                "profile.managed_default_content_settings.images": 2
             })
             
             # Set optimal permissions
@@ -442,9 +469,70 @@ def google_automation_worker(email, password, status_queue, stop_event):
             service = Service()
             driver = webdriver.Chrome(service=service, options=options)
             
-            # Enhanced anti-detection
+            # MAXIMUM LANGUAGE FORCING - OVERRIDE EVERYTHING TO ENGLISH
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+            
+            # AGGRESSIVE ENGLISH FORCING - OVERRIDE ALL LANGUAGE DETECTION
+            driver.execute_script("""
+                // FORCE ENGLISH LANGUAGE - OVERRIDE EVERYTHING
+                Object.defineProperty(navigator, 'language', {get: () => 'en-US', configurable: false});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en'], configurable: false});
+                
+                // OVERRIDE ALL LOCALE AND REGION DETECTION
+                if (typeof Intl !== 'undefined') {
+                    // Force all date/time formatting to English
+                    const originalDateTimeFormat = Intl.DateTimeFormat;
+                    Intl.DateTimeFormat = function(...args) {
+                        args[0] = 'en-US';
+                        return originalDateTimeFormat.apply(this, args);
+                    };
+                    
+                    // Force all number formatting to English
+                    const originalNumberFormat = Intl.NumberFormat;
+                    Intl.NumberFormat = function(...args) {
+                        args[0] = 'en-US';
+                        return originalNumberFormat.apply(this, args);
+                    };
+                    
+                    // Force all collation to English
+                    const originalCollator = Intl.Collator;
+                    Intl.Collator = function(...args) {
+                        args[0] = 'en-US';
+                        return originalCollator.apply(this, args);
+                    };
+                }
+                
+                // OVERRIDE TIMEZONE AND LOCALE DETECTION
+                try {
+                    Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {
+                        value: function() {
+                            return {
+                                locale: 'en-US',
+                                language: 'en',
+                                region: 'US',
+                                timeZone: 'America/New_York',
+                                calendar: 'gregory',
+                                numberingSystem: 'latn'
+                            };
+                        },
+                        configurable: false
+                    });
+                } catch(e) {}
+                
+                // FORCE DOCUMENT LANGUAGE
+                if (document.documentElement) {
+                    document.documentElement.lang = 'en-US';
+                    document.documentElement.setAttribute('lang', 'en-US');
+                }
+                
+                // OVERRIDE ANY GOOGLE-SPECIFIC LANGUAGE DETECTION
+                window.google_lang = 'en';
+                window.google_locale = 'en-US';
+                window.hl = 'en';
+                window.gl = 'US';
+            """)            
+            
+            # Other anti-detection measures
             driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
             
             # Initialize smart finder
@@ -467,11 +555,11 @@ def google_automation_worker(email, password, status_queue, stop_event):
             
         status_queue.put(("status", f"[{email}] Smart navigation to Google login"))
         
-        # Multiple navigation attempts with different URLs
+        # Multiple navigation attempts with different URLs and LANGUAGE FORCING
         login_urls = [
-            "https://accounts.google.com/signin/v2/identifier",
-            "https://accounts.google.com/signin",
-            "https://accounts.google.com/"
+            "https://accounts.google.com/signin/v2/identifier?hl=en",  # Force English with hl parameter
+            "https://accounts.google.com/signin?hl=en-US",
+            "https://accounts.google.com/?hl=en"
         ]
         
         navigation_success = False
@@ -480,10 +568,27 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 driver.get(url)
                 finder.wait_for_page_load()
                 
+                # Force English language on the page via JavaScript
+                try:
+                    driver.execute_script("""
+                        // Force English language on Google pages
+                        if (window.location.hostname.includes('google.com')) {
+                            // Try to force language parameter
+                            const url = new URL(window.location);
+                            if (!url.searchParams.has('hl') || url.searchParams.get('hl') !== 'en') {
+                                url.searchParams.set('hl', 'en');
+                                window.location.href = url.toString();
+                            }
+                        }
+                    """)                    
+                    time.sleep(1)  # Wait for potential redirect
+                except Exception:
+                    pass  # Continue if JavaScript fails
+                
                 # Verify we're on the right page
                 if "accounts.google.com" in driver.current_url:
                     navigation_success = True
-                    status_queue.put(("status", f"[{email}] ✅ Successfully navigated to Google login"))
+                    status_queue.put(("status", f"[{email}] ✅ Successfully navigated to Google login (English forced)"))
                     break
             except Exception as e:
                 continue
@@ -683,37 +788,33 @@ def google_automation_worker(email, password, status_queue, stop_event):
         try:
             status_queue.put(("status", f"[{email}] Detecting 2FA setup button"))
             
-            # Generate comprehensive multi-language 2FA button selectors
-            turn_on_texts = MULTI_LANG_TRANSLATIONS['turn_on']
-            turn_on_text_conditions = []
-            for text in turn_on_texts:
-                turn_on_text_conditions.extend([
-                    f'text()="{text}"',
-                    f'contains(text(), "{text}")',
-                    f'normalize-space(text())="{text}"',
-                    f'contains(normalize-space(text()), "{text}")',
-                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
-                ])
-            
-            turn_on_combined_condition = ' or '.join(turn_on_text_conditions)
-            
-            # Comprehensive 2FA button selectors (language-independent)
+            # ENGLISH-ONLY 2FA button selectors (PRIMARY - Language forced to English)
             twofa_selectors = [
-                # Original working selector
+                # ORIGINAL WORKING SELECTOR
                 '//*[@id="yDmH0d"]/c-wiz/div/div[2]/div[2]/c-wiz/div/div[1]/div[4]/div[2]/div/div/div/button/span[4]',
-                # Generic button selectors with comprehensive language support
-                f'//button[contains(@class, "VfPpkd-LgbsSe") and .//span[{turn_on_combined_condition}]]',
-                f'//button[{turn_on_combined_condition}]',
-                f'//span[@jsname="V67aGc" and ({turn_on_combined_condition})]',
-                '//button[contains(@jsaction, "click") and contains(.//text(), "2-Step")]',
-                '//div[contains(@class, "VfPpkd-RLmnJb")]//button[contains(@class, "VfPpkd-LgbsSe")]',
+                
+                # ENGLISH-FIRST SELECTORS - These should ALWAYS work with language forcing
+                '//button[.//span[text()="Turn on"]]',
+                '//button[text()="Turn on"]',
+                '//span[@jsname="V67aGc" and text()="Turn on"]',
+                '//button[contains(text(), "Turn on")]',
+                '//span[contains(text(), "Turn on")]',
+                '//button[contains(text(), "2-Step") and contains(text(), "Turn on")]',
+                
+                # STRUCTURAL SELECTORS (no text dependency)
                 '//button[@data-value="activate"]',
-                '//button[contains(@class, "mdc-button--raised")]',
-                # Fallback selectors
+                '//button[contains(@class, "VfPpkd-LgbsSe") and contains(@class, "VfPpkd-LgbsSe--primary")]',
+                '//div[contains(@class, "VfPpkd-RLmnJb")]//button[contains(@class, "VfPpkd-LgbsSe")]',
                 '//c-wiz//button[contains(@class, "VfPpkd-LgbsSe")]',
-                '//button[.//span[@class="VfPpkd-vQzf8d"]]',
-                '//div[@role="button" and contains(@class, "VfPpkd-LgbsSe")]'
+                '//button[contains(@jsaction, "click")]',
+                '//button[.//span[@class="VfPpkd-vQzf8d"]]'
             ]
+            
+            # EMERGENCY FALLBACK - Multi-language (should NOT be needed)
+            if len(twofa_selectors) < 15:  # Add fallbacks only if needed
+                turn_on_texts = MULTI_LANG_TRANSLATIONS['turn_on']
+                for text in turn_on_texts[1:3]:  # Only add first 3 fallback languages
+                    twofa_selectors.append(f'//button[.//span[text()="{text}"]]')
             
             twofa_button = finder.find_clickable_element(twofa_selectors, "2FA setup button")
             
@@ -797,40 +898,33 @@ def google_automation_worker(email, password, status_queue, stop_event):
             # Smart Next button clicking in phone modal with comprehensive selectors
             status_queue.put(("status", f"[{email}] Looking for Next button in phone modal"))
             
-            # Generate comprehensive multi-language Next button selectors
-            next_texts = MULTI_LANG_TRANSLATIONS['next']
-            next_text_conditions = []
-            for text in next_texts:
-                next_text_conditions.extend([
-                    f'text()="{text}"',
-                    f'contains(text(), "{text}")',
-                    f'normalize-space(text())="{text}"',
-                    f'contains(normalize-space(text()), "{text}")',
-                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
-                ])
-            
-            next_combined_condition = ' or '.join(next_text_conditions)
-            
+            # ENGLISH-ONLY Next button selectors (PRIMARY - Language forced to English)
             next_selectors = [
-                # Language-specific text selectors with comprehensive coverage
-                f'//button[.//span[@jsname="V67aGc" and ({next_combined_condition})]]',
-                f'//div[@role="dialog"]//button[.//span[{next_combined_condition}]]',
-                f'//button[{next_combined_condition}]',
-                f'//span[@jsname="V67aGc" and ({next_combined_condition})]',
-                # Modal-specific selectors
-                '//div[contains(@class, "VfPpkd-T0kwCb")]//button[.//span[@jsname="V67aGc"]]',  # Modal container
-                # Generic button selectors in modal context
+                # ENGLISH-FIRST SELECTORS - These should ALWAYS work with language forcing
+                '//button[.//span[@jsname="V67aGc" and text()="Next"]]',
+                '//button[.//span[text()="Next"]]',
+                '//button[text()="Next"]',
+                '//span[@jsname="V67aGc" and text()="Next"]',
+                '//button[contains(text(), "Next")]',
+                '//span[contains(text(), "Next")]',
+                
+                # MODAL-SPECIFIC ENGLISH SELECTORS
+                '//div[@role="dialog"]//button[.//span[text()="Next"]]',
+                '//div[@role="dialog"]//button[text()="Next"]',
+                '//div[@role="dialog"]//span[text()="Next"]',
+                
+                # STRUCTURAL SELECTORS (no text dependency)
                 '//button[@data-mdc-dialog-action="next"]',
-                '//button[contains(@class, "VfPpkd-LgbsSe") and .//span[@jsname="V67aGc"]]',
-                '//div[@role="dialog"]//button[contains(@class, "mdc-button--raised")]',
                 '//div[@role="dialog"]//button[contains(@class, "VfPpkd-LgbsSe--primary")]',
-                # Position-based selectors (last resort)
                 '//div[@role="dialog"]//button[last()]',
-                '//div[@role="dialog"]//button[position()=last()]',
-                # Very generic fallbacks
-                '//button[.//span[@jsname="V67aGc"]]',
-                '//button[contains(@class, "VfPpkd-LgbsSe")]'
+                '//button[.//span[@jsname="V67aGc"]]'
             ]
+            
+            # EMERGENCY FALLBACK - Multi-language (should NOT be needed with language forcing)
+            if len(next_selectors) < 20:  # Add fallbacks only if needed
+                next_texts = MULTI_LANG_TRANSLATIONS['next']
+                for text in next_texts[1:5]:  # Only add first 5 fallback languages
+                    next_selectors.append(f'//button[.//span[text()="{text}"]]')
             
             next_button_found = None
             for i, selector in enumerate(next_selectors):
@@ -852,42 +946,35 @@ def google_automation_worker(email, password, status_queue, stop_event):
                     # Handle "Confirm your phone number" modal with Save button
                     status_queue.put(("status", f"[{email}] Looking for Save button in phone confirmation modal"))
                     
-                    # Generate comprehensive multi-language Save button selectors
-                    save_texts = MULTI_LANG_TRANSLATIONS['save']
-                    save_text_conditions = []
-                    for text in save_texts:
-                        save_text_conditions.extend([
-                            f'text()="{text}"',
-                            f'contains(text(), "{text}")',
-                            f'normalize-space(text())="{text}"',
-                            f'contains(normalize-space(text()), "{text}")',
-                            f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
-                        ])
-                    
-                    save_combined_condition = ' or '.join(save_text_conditions)
-                    
-                    # Comprehensive Save button selectors for "Confirm your phone number" modal
+                    # ENGLISH-ONLY Save button selectors (PRIMARY - Language forced to English)
                     save_selectors = [
-                        # Specific Save button with data-mdc-dialog-action
-                        '//button[@data-mdc-dialog-action="x8hlje" and @aria-label="Save phone number"]',
+                        # ENGLISH-FIRST SELECTORS - These should ALWAYS work with language forcing
+                        '//button[.//span[text()="Save"]]',
+                        '//button[text()="Save"]',
+                        '//span[@jsname="V67aGc" and text()="Save"]',
+                        '//button[contains(text(), "Save")]',
+                        '//span[contains(text(), "Save")]',
+                        
+                        # SPECIFIC SAVE BUTTON WITH DATA ATTRIBUTES
                         '//button[@data-mdc-dialog-action="x8hlje"]',
-                        # Generic Save button text patterns (comprehensive multi-language)
-                        f'//button[.//span[{save_combined_condition}]]',
-                        f'//button[{save_combined_condition}]',
-                        f'//span[@jsname="V67aGc" and ({save_combined_condition})]',
-                        # Modal-specific Save button
-                        f'//div[@role="dialog"]//button[.//span[{save_combined_condition}]]',
-                        f'//div[@aria-modal="true"]//button[.//span[{save_combined_condition}]]',
-                        # Save button by class and visibility
-                        f'//button[contains(@class, "mUIrbf-LgbsSe") and not(@disabled) and not(contains(@style, "display: none")) and .//span[{save_combined_condition}]]',
-                        # Data action patterns for Save
-                        '//button[contains(@data-mdc-dialog-action, "save") or contains(@data-mdc-dialog-action, "x8hlje")]',
-                        # Generic visible button in modal (last resort)
+                        '//button[@data-mdc-dialog-action="x8hlje" and @aria-label="Save phone number"]',
+                        
+                        # MODAL-SPECIFIC ENGLISH SELECTORS
+                        '//div[@role="dialog"]//button[.//span[text()="Save"]]',
+                        '//div[@role="dialog"]//button[text()="Save"]',
+                        '//div[@aria-modal="true"]//button[.//span[text()="Save"]]',
+                        
+                        # STRUCTURAL SELECTORS (no text dependency)
+                        '//button[contains(@data-mdc-dialog-action, "save")]',
                         '//div[@role="dialog"]//button[not(@disabled) and not(contains(@style, "display: none"))][last()]',
-                        '//div[@aria-modal="true"]//button[not(@disabled) and not(contains(@style, "display: none"))][last()]',
-                        # JSName-based Save button
-                        f'//button[.//span[@jsname="V67aGc" and ({save_combined_condition})]]'
+                        '//button[.//span[@jsname="V67aGc"]]'
                     ]
+                    
+                    # EMERGENCY FALLBACK - Multi-language (should NOT be needed)
+                    if len(save_selectors) < 15:  # Add fallbacks only if needed
+                        save_texts = MULTI_LANG_TRANSLATIONS['save']
+                        for text in save_texts[1:3]:  # Only add first 3 fallback languages
+                            save_selectors.append(f'//button[.//span[text()="{text}"]]')
                     
                     save_button_found = None
                     for i, selector in enumerate(save_selectors):
@@ -1015,29 +1102,27 @@ def google_automation_worker(email, password, status_queue, stop_event):
             app_input.clear()
             app_input.send_keys("AutomationApp")
 
-            # Generate comprehensive multi-language Create button selectors
+            # Generate ENGLISH-FIRST selectors since we're forcing English language
+            # Primary English selectors (more reliable with language forcing)
+            create_selectors = [
+                '//button[.//span[@jsname="V67aGc" and (text()="Create" or contains(text(), "Create"))]]',
+                '//button[contains(text(), "Create") or .//span[contains(text(), "Create")]]',
+                '//button[@data-action="create"]',
+                '//button[contains(@class, "VfPpkd-LgbsSe") and contains(@class, "VfPpkd-LgbsSe--primary")]',
+                '//button[.//span[@jsname="V67aGc"]]'  # Generic button with jsname span
+            ]
+            
+            # Multi-language fallback (in case language forcing fails)
             create_texts = MULTI_LANG_TRANSLATIONS['create']
             create_text_conditions = []
             for text in create_texts:
                 create_text_conditions.extend([
                     f'text()="{text}"',
-                    f'contains(text(), "{text}")',
-                    f'normalize-space(text())="{text}"',
-                    f'contains(normalize-space(text()), "{text}")',
-                    f'translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")="{text.lower()}"'
+                    f'contains(text(), "{text}")'
                 ])
             
-            create_combined_condition = ' or '.join(create_text_conditions)
-            
-            # Click Create button using comprehensive language-independent selectors
-            create_selectors = [
-                f'//button[.//span[@jsname="V67aGc" and ({create_combined_condition})]]',
-                f'//button[{create_combined_condition}]',
-                f'//span[@jsname="V67aGc" and ({create_combined_condition})]',
-                '//button[@data-action="create"]',
-                '//button[contains(@class, "VfPpkd-LgbsSe") and contains(@class, "VfPpkd-LgbsSe--primary")]',
-                '//button[.//span[@jsname="V67aGc"]]'  # Generic button with jsname span
-            ]
+            fallback_condition = ' or '.join(create_text_conditions)
+            create_selectors.append(f'//button[{fallback_condition}]')
             
             create_clicked = False
             for selector in create_selectors:

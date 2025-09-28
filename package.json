@@ -1,0 +1,41 @@
+{
+  "name": "advanced-activation-server",
+  "version": "1.0.0",
+  "description": "Advanced license activation server with admin dashboard for algolizen.com",
+  "main": "advanced-activation-server.js",
+  "scripts": {
+    "start": "node advanced-activation-server.js",
+    "dev": "nodemon advanced-activation-server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "license",
+    "activation",
+    "server",
+    "authentication",
+    "admin",
+    "dashboard"
+  ],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.30.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}

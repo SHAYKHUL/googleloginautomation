@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Management System - Admin Panel</title>
+    <link rel="stylesheet" href="admin-styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>License Management System</h1>
+            <div class="admin-info">
+                <span>Admin Panel</span>
+                <button onclick="logout()" class="logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <!-- Login Section -->
+        <div id="login-section" class="login-section">
+            <div class="login-form">
+                <h2>Admin Login</h2>
+                <input type="password" id="admin-password" placeholder="Enter admin password">
+                <button onclick="login()">Login</button>
+                <div id="login-error" class="error-message"></div>
+            </div>
+        </div>
+
+        <!-- Admin Dashboard -->
+        <div id="dashboard" class="dashboard" style="display: none;">
+            
+            <!-- Statistics Section -->
+            <section class="stats-section">
+                <div class="stats-header">
+                    <h2>📊 License Statistics</h2>
+                    <div class="auto-refresh-controls">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-refresh" checked>
+                            <span class="slider"></span>
+                        </label>
+                        <span>Auto-refresh (30s)</span>
+                        <button onclick="licenseManager.refreshAll()" class="refresh-all-btn">🔄 Refresh Now</button>
+                    </div>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card active-card">
+                        <div class="stat-icon">✅</div>
+                        <h3>Active Licenses</h3>
+                        <div class="stat-number" id="active-count">0</div>
+                        <div class="stat-trend" id="active-trend"></div>
+                    </div>
+                    <div class="stat-card revoked-card">
+                        <div class="stat-icon">❌</div>
+                        <h3>Revoked Licenses</h3>
+                        <div class="stat-number" id="revoked-count">0</div>
+                        <div class="stat-trend" id="revoked-trend"></div>
+                    </div>
+                    <div class="stat-card total-card">
+                        <div class="stat-icon">📊</div>
+                        <h3>Total Generated</h3>
+                        <div class="stat-number" id="total-count">0</div>
+                        <div class="stat-trend" id="total-trend"></div>
+                    </div>
+                    <div class="stat-card expiring-card">
+                        <div class="stat-icon">⚠️</div>
+                        <h3>Expiring Soon</h3>
+                        <div class="stat-number" id="expiring-count">0</div>
+                        <div class="stat-trend" id="expiring-trend"></div>
+                    </div>
+                    <div class="stat-card online-card">
+                        <div class="stat-icon">🟢</div>
+                        <h3>Kill Switches Active</h3>
+                        <div class="stat-number" id="kill-switches-count">0</div>
+                        <div class="stat-trend" id="kill-switches-trend"></div>
+                    </div>
+                </div>
+                <div class="last-updated">
+                    Last updated: <span id="last-updated-time">Never</span>
+                </div>
+            </section>
+
+            <!-- Essential Admin Controls -->
+            <section class="admin-controls-section">
+                <h2>⚡ Essential Admin Controls</h2>
+                
+                <!-- Quick Actions Grid -->
+                <div class="quick-actions-grid">
+                    <div class="control-card">
+                        <h3>📄 License Actions</h3>
+                        <div class="card-content">
+                            <div class="input-row">
+                                <input type="date" id="quick-expiry" class="compact-input">
+                                <input type="number" id="quick-count" value="1" min="1" max="20" class="compact-input" placeholder="Count">
+                            </div>
+                            <button onclick="quickGenerateLicense()" class="primary-btn">Generate License</button>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <h3>🎯 Device Control</h3>
+                        <div class="card-content">
+                            <input type="text" id="device-hardware-id" class="compact-input" placeholder="Hardware ID">
+                            <div class="button-row">
+                                <button onclick="killDevice()" class="danger-btn">Kill</button>
+                                <button onclick="allowDevice()" class="success-btn">Allow</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <h3>🚨 Emergency Actions</h3>
+                        <div class="card-content">
+                            <div class="emergency-buttons">
+                                <button onclick="confirmKillAll()" class="emergency-btn">🔴 Kill All Users</button>
+                                <button onclick="allowAllDevices()" class="restore-btn">🟢 Restore All Access</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <h3>⚙️ Bulk Operations</h3>
+                        <div class="card-content">
+                            <textarea id="bulk-licenses" class="compact-textarea" placeholder="License keys (one per line)" rows="2"></textarea>
+                            <div class="button-row">
+                                <button onclick="bulkRevoke()" class="warning-btn">Revoke</button>
+                                <button onclick="bulkRestore()" class="success-btn">Restore</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Status Bar -->
+                <div class="admin-status-bar">
+                    <div class="status-item">
+                        <span class="status-icon">🟢</span>
+                        <span>Server Online</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-icon">🔴</span>
+                        <span id="kill-count">0 Active Kills</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-icon">⚡</span>
+                        <span id="last-admin-action">No Recent Actions</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- License Generation Section -->
+            <section class="generation-section">
+                <h2>Generate New License</h2>
+                <div class="generate-form">
+                    <div class="form-group">
+                        <label for="hardware-id">Hardware ID (Optional - leave blank for any device):</label>
+                        <input type="text" id="hardware-id" placeholder="Enter hardware ID or leave blank">
+                    </div>
+                    <div class="form-group">
+                        <label for="expiry-date">Expiry Date:</label>
+                        <input type="date" id="expiry-date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="license-count">Number of Licenses:</label>
+                        <input type="number" id="license-count" value="1" min="1" max="100">
+                    </div>
+                    <button onclick="generateLicense()" class="generate-btn">Generate License(s)</button>
+                </div>
+                <div id="generated-licenses" class="generated-licenses"></div>
+            </section>
+
+            <!-- Bulk Operations Section -->
+            <section class="bulk-operations-section">
+                <h2>⚡ Bulk Operations & Advanced Controls</h2>
+                <div class="bulk-controls">
+                    <div class="bulk-group">
+                        <h3>📊 Quick Actions</h3>
+                        <div class="quick-actions">
+                            <button onclick="licenseManager.selectAllActive()" class="select-btn">☑️ Select All Active</button>
+                            <button onclick="licenseManager.selectAllRevoked()" class="select-btn">☑️ Select All Revoked</button>
+                            <button onclick="licenseManager.selectExpiring()" class="select-btn">⚠️ Select Expiring</button>
+                            <button onclick="licenseManager.clearSelection()" class="clear-btn">❌ Clear Selection</button>
+                        </div>
+                        <div class="selection-info">
+                            Selected: <span id="selected-count">0</span> licenses
+                        </div>
+                    </div>
+                    
+                    <div class="bulk-group">
+                        <h3>🔄 Bulk Operations</h3>
+                        <div class="bulk-actions">
+                            <button onclick="bulkRevokeLicenses()" class="bulk-revoke-btn">⛔ Revoke Selected</button>
+                            <button onclick="bulkRestoreLicenses()" class="bulk-restore-btn">✅ Restore Selected</button>
+                            <button onclick="bulkKillSwitches()" class="bulk-kill-btn">🔴 Kill Selected Devices</button>
+                            <button onclick="bulkExportLicenses()" class="export-btn">📄 Export Selected</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Advanced Filtering Section -->
+            <section class="filtering-section">
+                <h2>🔍 Advanced Search & Filtering</h2>
+                <div class="filter-controls">
+                    <div class="filter-group">
+                        <label>Status Filter:</label>
+                        <select id="status-filter" onchange="licenseManager.applyFilters()">
+                            <option value="all">All Statuses</option>
+                            <option value="active">Active Only</option>
+                            <option value="revoked">Revoked Only</option>
+                            <option value="expiring">Expiring Soon</option>
+                            <option value="expired">Expired</option>
+                        </select>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Date Range:</label>
+                        <input type="date" id="date-from" onchange="licenseManager.applyFilters()">
+                        <span>to</span>
+                        <input type="date" id="date-to" onchange="licenseManager.applyFilters()">
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Hardware ID Pattern:</label>
+                        <input type="text" id="hardware-filter" placeholder="Search hardware ID..." onkeyup="licenseManager.applyFilters()">
+                    </div>
+                    
+                    <div class="filter-actions">
+                        <button onclick="licenseManager.clearFilters()" class="clear-filters-btn">🗑️ Clear Filters</button>
+                        <button onclick="licenseManager.saveFilters()" class="save-filters-btn">💾 Save Filters</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Licenses Section -->
+            <section class="licenses-section">
+                <h2>Active Licenses</h2>
+                <div class="table-controls">
+                    <input type="text" id="search-active" placeholder="Search active licenses..." onkeyup="filterTable('active-table', this.value)">
+                    <button onclick="refreshActiveLicenses()" class="refresh-btn">Refresh</button>
+                </div>
+                <div class="table-container">
+                    <table id="active-table">
+                        <thead>
+                            <tr>
+                                <th>
+                                    <input type="checkbox" id="select-all-active" onchange="licenseManager.toggleSelectAll(this, 'active')">
+                                </th>
+                                <th>License Key</th>
+                                <th>Hardware ID</th>
+                                <th>Activation Date</th>
+                                <th>Expiry Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="active-licenses-body">
+                            <!-- Dynamic content -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Revoked Licenses Section -->
+            <section class="licenses-section">
+                <h2>Revoked Licenses</h2>
+                <div class="table-controls">
+                    <input type="text" id="search-revoked" placeholder="Search revoked licenses..." onkeyup="filterTable('revoked-table', this.value)">
+                    <button onclick="refreshRevokedLicenses()" class="refresh-btn">Refresh</button>
+                </div>
+                <div class="table-container">
+                    <table id="revoked-table">
+                        <thead>
+                            <tr>
+                                <th>License Key</th>
+                                <th>Revocation Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="revoked-licenses-body">
+                            <!-- Dynamic content -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- License Details Modal -->
+            <div id="license-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close" onclick="closeLicenseModal()">&times;</span>
+                    <h2>License Details</h2>
+                    <div id="license-details"></div>
+                </div>
+            </div>
+
+            <!-- Confirmation Modal -->
+            <div id="confirm-modal" class="modal">
+                <div class="modal-content">
+                    <h3>Confirm Action</h3>
+                    <p id="confirm-message"></p>
+                    <div class="modal-actions">
+                        <button onclick="confirmAction()" class="confirm-btn">Confirm</button>
+                        <button onclick="closeConfirmModal()" class="cancel-btn">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="admin-script.js"></script>
+</body>
+</html>

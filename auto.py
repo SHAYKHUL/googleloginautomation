@@ -1,6 +1,7 @@
 import csv
 import time
 import os
+import multiprocessing
 from datetime import datetime
 from multiprocessing import Process, Lock
 from selenium import webdriver
@@ -182,16 +183,55 @@ def google_login(email, password):
         save_failed_account(email, password, f"Login failed: {e}")
         driver.quit()
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the automation"""
     processes = []
-    with open("accounts.csv", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            email = row["email"].strip()
-            password = row["password"].strip()
-            p = Process(target=google_login, args=(email, password))
-            p.start()
-            processes.append(p)
-    print("🔥 All login processes started. Browsers should be open.")
-    for p in processes:
-        p.join()
+    
+    # Check if accounts.csv exists
+    if not os.path.exists("accounts.csv"):
+        print("❌ Error: accounts.csv file not found!")
+        print("Please ensure accounts.csv is in the same folder as this executable.")
+        input("Press Enter to exit...")
+        return
+    
+    try:
+        with open("accounts.csv", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            accounts = list(reader)
+            
+            if not accounts:
+                print("❌ Error: No accounts found in accounts.csv!")
+                input("Press Enter to exit...")
+                return
+                
+            print(f"📊 Found {len(accounts)} accounts to process.")
+            
+            for row in accounts:
+                email = row["email"].strip()
+                password = row["password"].strip()
+                if email and password:
+                    p = Process(target=google_login, args=(email, password))
+                    p.start()
+                    processes.append(p)
+                    time.sleep(2)  # Small delay between starting processes
+                
+        print("🔥 All login processes started. Browsers should be open.")
+        
+        # Wait for all processes to complete
+        for p in processes:
+            p.join()
+            
+        print("✅ All processes completed!")
+        input("Press Enter to exit...")
+        
+    except FileNotFoundError:
+        print("❌ Error: accounts.csv file not found!")
+        input("Press Enter to exit...")
+    except Exception as e:
+        print(f"❌ Error reading accounts.csv: {e}")
+        input("Press Enter to exit...")
+
+if __name__ == "__main__":
+    # This is required for multiprocessing on Windows executables
+    multiprocessing.freeze_support()
+    main()

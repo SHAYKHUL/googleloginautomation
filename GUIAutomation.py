@@ -2270,9 +2270,6 @@ def main():
     # ======================== START APPLICATION ========================
     print("License validated. Starting Google Account Automation Tool...")
     
-    # Show the main window now
-    root.deiconify()  # Show the hidden root window
-    
     # Additional runtime check
     def runtime_license_check():
         _verify_app_integrity()  # Continuous integrity checking
@@ -2284,7 +2281,11 @@ def main():
     # Start runtime checking
     root.after(60000, runtime_license_check)
     
+    # Create the application FIRST (this sets proper geometry)
     app = GoogleAutomationGUI(root)
+    
+    # NOW show the window (after geometry is set correctly)
+    root.deiconify()  # Show the window with correct size and position
     root.mainloop()
 
 if __name__ == "__main__":

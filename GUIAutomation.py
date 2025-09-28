@@ -46,8 +46,8 @@ ACTIVATION_ENDPOINT = f"{LICENSE_SERVER_URL}/activate"  # Correct activation end
 VALIDATION_ENDPOINT = f"{LICENSE_SERVER_URL}/activate"  # Use same endpoint for validation
 
 # ⚠️ SECURITY CRITICAL: Replace with your actual 32-byte secret key (base64 encoded recommended)
-SECRET_KEY = b"REPLACE-WITH-YOUR-32-BYTE-SECRET"  # Must be exactly 32 bytes
-HMAC_KEY = b"REPLACE-WITH-YOUR-HMAC-SECRET-KEY"  # Your HMAC secret for signatures
+SECRET_KEY = "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"  # Must be exactly 32 bytes (64 hex chars)
+HMAC_KEY = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"    # Must be exactly 32 bytes (64 hex chars)
 
 # Example of proper key generation (run once, then use the generated keys):
 # import os
@@ -110,7 +110,9 @@ def get_hardware_id():
 def encrypt_license(license_data):
     """Encrypt license data using AES"""
     try:
-        cipher = AES.new(SECRET_KEY, AES.MODE_CBC)
+        # Convert hex string to bytes for AES
+        key_bytes = bytes.fromhex(SECRET_KEY)
+        cipher = AES.new(key_bytes, AES.MODE_CBC)
         padded_data = pad(license_data.encode(), AES.block_size)
         encrypted = cipher.encrypt(padded_data)
         return b64encode(cipher.iv + encrypted).decode()
@@ -121,10 +123,12 @@ def encrypt_license(license_data):
 def decrypt_license(encrypted_license):
     """Decrypt license data"""
     try:
+        # Convert hex string to bytes for AES
+        key_bytes = bytes.fromhex(SECRET_KEY)
         encrypted_data = b64decode(encrypted_license.encode())
         iv = encrypted_data[:16]
         ciphertext = encrypted_data[16:]
-        cipher = AES.new(SECRET_KEY, AES.MODE_CBC, iv)
+        cipher = AES.new(key_bytes, AES.MODE_CBC, iv)
         decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
         return decrypted.decode()
     except Exception as e:

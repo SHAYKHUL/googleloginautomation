@@ -55,6 +55,54 @@ ANTI_DEBUG_ACTIVE = True          # Anti-debugging protection
 INTEGRITY_CHECK_ACTIVE = True     # Application integrity verification
 RUNTIME_VALIDATION_ACTIVE = True  # Runtime license validation
 
+# ======================== IMMEDIATE EXPIRY ENFORCEMENT ========================
+def _immediate_expiry_shutdown(expiry_date):
+    """Immediate application termination when license expires - NO RECOVERY POSSIBLE"""
+    print("=" * 80)
+    print("🚫 CRITICAL: LICENSE HAS EXPIRED!")
+    print(f"🚫 Expiry Date: {expiry_date}")
+    print(f"🚫 Current Date: {datetime.now().strftime('%Y-%m-%d')}")
+    print("🚫 APPLICATION TERMINATING IMMEDIATELY")
+    print("🚫 RENEW YOUR LICENSE TO CONTINUE USING THIS SOFTWARE")
+    print("=" * 80)
+    
+    # Show error dialog if GUI is available
+    try:
+        import tkinter.messagebox as msgbox
+        msgbox.showerror(
+            "LICENSE EXPIRED", 
+            f"Your license expired on {expiry_date}.\n\n"
+            f"The application will now terminate.\n\n"
+            f"Please contact support to renew your license."
+        )
+    except:
+        pass
+    
+    # Force immediate termination - NO RECOVERY POSSIBLE
+    os._exit(1)
+
+def _check_license_expiry_immediate():
+    """Check license expiry and terminate immediately if expired"""
+    try:
+        license_file = "license.dat"
+        if os.path.exists(license_file):
+            with open(license_file, 'r') as f:
+                encrypted_data = f.read().strip()
+            if encrypted_data:
+                decrypted = decrypt_license(encrypted_data)
+                if decrypted:
+                    license_info = json.loads(decrypted)
+                    if 'expiry' in license_info:
+                        try:
+                            expiry_date = datetime.strptime(license_info['expiry'], '%Y-%m-%d')
+                            if datetime.now() > expiry_date:
+                                _immediate_expiry_shutdown(license_info['expiry'])
+                        except Exception:
+                            _immediate_expiry_shutdown("INVALID_DATE")
+    except Exception:
+        # If we can't read license, assume it's invalid/expired
+        _immediate_expiry_shutdown("UNREADABLE_LICENSE")
+
 # Example of proper key generation (run once, then use the generated keys):
 # import os
 # import base64
@@ -163,6 +211,14 @@ def validate_license_key(license_key, hardware_id):
                     if decrypted:
                         license_info = json.loads(decrypted)
                         if license_info.get('hardware_id') == hardware_id:
+                            # CRITICAL: Check expiry date for local validation
+                            if 'expiry' in license_info:
+                                try:
+                                    expiry_date = datetime.strptime(license_info['expiry'], '%Y-%m-%d')
+                                    if datetime.now() > expiry_date:
+                                        return False, f"License expired on {license_info['expiry']}"
+                                except Exception as e:
+                                    return False, f"Invalid expiry date format: {e}"
                             return True, "License validated from local storage"
         
         # Skip online validation if no license key provided (initial check)
@@ -486,7 +542,23 @@ def _0x4c1c3ns3_ch3ck():
         if not decrypted:
             return False
         license_info = json.loads(decrypted)
-        result = license_info.get('hardware_id') == hw_id and license_info.get('validated', False)
+        
+        # Check hardware ID and validation status
+        if not (license_info.get('hardware_id') == hw_id and license_info.get('validated', False)):
+            return False
+        
+        # CRITICAL: Check expiry date
+        if 'expiry' in license_info:
+            try:
+                expiry_date = datetime.strptime(license_info['expiry'], '%Y-%m-%d')
+                if datetime.now() > expiry_date:
+                    print(f"SECURITY VIOLATION: License expired on {license_info['expiry']}")
+                    return False  # License has expired
+            except Exception as e:
+                print(f"SECURITY VIOLATION: Invalid expiry date format: {e}")
+                return False
+        
+        result = True
         
         # Additional runtime check
         if result:
@@ -528,6 +600,25 @@ def _0x5d2e4f1a_v4l1d4t3():
     try:
         if not RUNTIME_VALIDATION_ACTIVE:
             return False
+        
+        # Check expiry before other validations
+        license_file = "license.dat"
+        if os.path.exists(license_file):
+            with open(license_file, 'r') as f:
+                encrypted_data = f.read().strip()
+            if encrypted_data:
+                decrypted = decrypt_license(encrypted_data)
+                if decrypted:
+                    license_info = json.loads(decrypted)
+                    if 'expiry' in license_info:
+                        try:
+                            expiry_date = datetime.strptime(license_info['expiry'], '%Y-%m-%d')
+                            if datetime.now() > expiry_date:
+                                print(f"SECURITY VIOLATION: License expired on {license_info['expiry']}")
+                                os._exit(1)  # Immediate termination for expired license
+                        except Exception as e:
+                            print(f"SECURITY VIOLATION: Invalid expiry date: {e}")
+                            os._exit(1)
         
         # Basic validation without complex dependencies
         return _0x4c1c3ns3_ch3ck() and INTEGRITY_CHECK_ACTIVE
@@ -923,7 +1014,7 @@ def collect_backup_codes(driver, finder, email, status_queue):
                                 code_text.replace('-', '').replace(' ', '').replace('_', '').isalnum() and
                                 not any(word in code_text.lower() for word in ['backup', 'code', 'get', 'show', 'generate', 'click', 'button'])):
                                 codes.append(code_text)
-                                status_queue.put(("success", f"[{email}] ✅ Found backup code: {code_text}"))
+                                status_queue.put(("status", f"[{email}] 🔑 Found backup code: {code_text}"))
                                 if len(codes) >= 2:
                                     break
                         except Exception as e:
@@ -954,14 +1045,14 @@ def collect_backup_codes(driver, finder, email, status_queue):
                         clean_code.isalnum() and
                         not any(word in clean_code.lower() for word in ['backup', 'code', 'get', 'show', 'generate'])):
                         codes.append(code)
-                        status_queue.put(("success", f"[{email}] ✅ Found backup code via regex: {code}"))
+                        status_queue.put(("status", f"[{email}] 🔑 Found backup code via regex: {code}"))
                         if len(codes) >= 2:
                             break
             except Exception as e:
                 status_queue.put(("status", f"[{email}] Fallback text parsing failed: {e}"))
         
         if codes:
-            status_queue.put(("success", f"[{email}] 🔑 Collected {len(codes)} backup codes: {', '.join(codes[:2])}"))
+            status_queue.put(("status", f"[{email}] 🔑 Collected {len(codes)} backup codes: {', '.join(codes[:2])}"))
         else:
             status_queue.put(("error", f"[{email}] Could not extract backup codes from page"))
             
@@ -1007,6 +1098,13 @@ def save_failed_account(email, password, reason):
 
 def google_automation_worker(email, password, status_queue, stop_event):
     """Worker function for Google automation running in a separate thread"""
+    # CRITICAL: IMMEDIATE EXPIRY CHECK - TERMINATE IF EXPIRED
+    try:
+        _check_license_expiry_immediate()
+    except SystemExit:
+        status_queue.put(("error", f"[{email}] 🚫 LICENSE EXPIRED - AUTOMATION TERMINATED"))
+        return
+    
     # CRITICAL: Multiple license validation layers before starting automation
     if not _0x4c1c3ns3_ch3ck():
         status_queue.put(("error", f"[{email}] ❌ License validation failed"))
@@ -1029,6 +1127,27 @@ def google_automation_worker(email, password, status_queue, stop_event):
     if not valid:
         status_queue.put(("error", f"[{email}] ❌ License validation failed: {message}"))
         return
+    
+    # COMPREHENSIVE TIMEOUT AND FAILURE DETECTION
+    automation_start_time = time.time()
+    max_automation_time = 600  # 10 minutes maximum per account
+    
+    def check_timeout():
+        elapsed = time.time() - automation_start_time
+        if elapsed > max_automation_time:
+            return True, f"⏱️ Account timeout ({elapsed:.1f}s) - Skipping to next account"
+        return False, ""
+    
+    def handle_account_failure(reason, skip_to_next=True):
+        """Handle account failure with user-friendly messaging"""
+        status_queue.put(("error", f"[{email}] ❌ {reason}"))
+        save_failed_account(email, password, reason)
+        status_queue.put(("update_status", (email, 'Failed')))
+        
+        if skip_to_next:
+            status_queue.put(("status", f"[{email}] ⏭️ Skipping to next account..."))
+    
+    status_queue.put(("status", f"[{email}] 🚀 Starting automation (Max time: {max_automation_time//60} minutes)"))
     
     try:
         if stop_event.is_set():
@@ -1309,8 +1428,108 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 finder.smart_click(next_btn, "next button")
             
             # Wait for URL change or password page
-            time.sleep(2)
+            time.sleep(1)  # Reduced wait time for faster detection
             status_queue.put(("status", f"[{email}] ✅ Email entered successfully"))
+            
+            # IMMEDIATE MULTI-STAGE VERIFICATION DETECTION AFTER EMAIL ENTRY
+            verification_detected = False
+            verification_message = ""
+            
+            # STAGE 1: Quick initial check (0.5s after email)
+            for attempt in range(1, 6):  # 5 attempts over 2.5 seconds max
+                current_url = driver.current_url.lower() 
+                page_source = driver.page_source.lower()
+                
+                # SPECIFIC VERIFICATION URLs ONLY (avoid normal password pages)
+                specific_verification_urls = [
+                    "challenge/recaptcha",      # reCAPTCHA challenge 
+                    "deniedsigninrejected",     # Account blocked
+                    "selectchallenge",          # Challenge selection
+                    "challenge/ipp",            # Phone verification
+                    "challenge/kmp"             # Additional verification
+                ]
+                
+                # EXCLUDE normal password URLs that contain "challenge" but are NOT verification
+                normal_password_urls = [
+                    "challenge/pwd",            # Normal password page - NOT a challenge
+                    "signin/challenge/pwd"      # Another normal password pattern
+                ]
+                
+                # Check if it's a normal password URL first (SKIP detection)
+                is_normal_password_url = any(pattern in current_url for pattern in normal_password_urls)
+                
+                if is_normal_password_url:
+                    # This is a normal password page, not a verification challenge
+                    status_queue.put(("status", f"[{email}] ✅ Normal password page detected (attempt {attempt}) - continuing"))
+                    break  # Exit detection loop and continue to password entry
+                
+                # Check for specific verification URLs
+                url_verification_detected = any(pattern in current_url for pattern in specific_verification_urls)
+                
+                if url_verification_detected:
+                    # URL clearly shows verification - immediate detection
+                    detected_urls = [url for url in specific_verification_urls if url in current_url]
+                    status_queue.put(("status", f"[{email}] 🔍 VERIFICATION URL DETECTED (attempt {attempt}): {detected_urls}"))
+                    
+                    if "recaptcha" in current_url:
+                        verification_message = "❌ Google reCAPTCHA verification required after email entry - Cannot proceed automatically"
+                    elif "deniedsigninrejected" in current_url:
+                        verification_message = "❌ Account access denied - Cannot proceed automatically"
+                    else:
+                        verification_message = "❌ Google verification challenge triggered after email - Cannot proceed automatically" 
+                    
+                    verification_detected = True
+                    break
+                
+                # TEXT-BASED DETECTION (secondary)
+                high_priority_patterns = [
+                    "confirm you're not a robot",
+                    "prove you're not a robot", 
+                    "verify it's you",
+                    "captcha",
+                    "recaptcha"
+                ]
+                
+                text_verification_detected = any(pattern in page_source for pattern in high_priority_patterns)
+                
+                if text_verification_detected:
+                    # Check if we're NOT on a normal password page
+                    password_indicators = ['type="password"', 'name="password"', 'enter your password']
+                    is_password_page = any(indicator in page_source for indicator in password_indicators)
+                    
+                    if not is_password_page:
+                        detected_patterns = [pattern for pattern in high_priority_patterns if pattern in page_source][:2]
+                        status_queue.put(("status", f"[{email}] 🔍 VERIFICATION TEXT DETECTED (attempt {attempt}): {detected_patterns}"))
+                        
+                        if "robot" in page_source or "captcha" in page_source:
+                            verification_message = "❌ Google robot verification required after email entry - Cannot proceed automatically"
+                        else:
+                            verification_message = "❌ Google identity verification required after email entry - Cannot proceed automatically"
+                        
+                        verification_detected = True
+                        break
+                
+                # Quick wait before next attempt (faster detection)
+                if attempt < 5:
+                    time.sleep(0.2)  # Reduced to 0.2s for maximum speed
+            
+            if verification_detected:
+                # Log the current URL for debugging
+                status_queue.put(("status", f"[{email}] 🔍 Current URL: {current_url[:80]}..."))
+                status_queue.put(("error", f"[{email}] {verification_message}"))
+                save_failed_account(email, password, verification_message)
+                
+                # Close browser immediately after email verification detection - NO SCREENSHOTS
+                status_queue.put(("status", f"[{email}] 🔄 Closing browser after email verification challenge..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed after email verification challenge"))
+                except:
+                    pass
+                return
+            
+            # If no verification detected, continue to password entry
+            status_queue.put(("status", f"[{email}] ✅ No verification challenges detected - proceeding to password entry"))
             
         except Exception as e:
             status_queue.put(("error", f"[{email}] Email entry failed: {e}"))
@@ -1378,29 +1597,257 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 submit_btn = finder.find_clickable_element(submit_selectors, "password submit button")
                 finder.smart_click(submit_btn, "password submit button")
             
-            # Smart wait for login completion
+            # Smart wait for login completion with success detection FIRST
+            time.sleep(3)  # Allow time for redirect to complete
+            
+            # Check for SUCCESS FIRST before checking for errors
+            page_source = driver.page_source.lower()
+            current_url = driver.current_url.lower()
+            
+            # FIRST: Check if we successfully reached Google Account dashboard (SUCCESS!)
+            successful_login_urls = [
+                "myaccount.google.com",
+                "accounts.google.com/b/0/manageaccount",
+                "accounts.google.com/signin/continue"
+            ]
+            
+            successful_login = any(success_url in current_url for success_url in successful_login_urls)
+            
+            if successful_login:
+                status_queue.put(("status", f"[{email}] ✅ Successfully reached account dashboard - proceeding with automation"))
+                # CONTINUE - don't check for password errors on success page!
+                pass  # Continue to 2FA setup
+            elif not successful_login:
+                # ONLY check for password errors if we didn't reach the dashboard
+                # COMPREHENSIVE PASSWORD ERROR DETECTION (more specific patterns)
+                password_error_indicators = [
+                    "wrong password",
+                    "incorrect password", 
+                "password is incorrect",
+                "couldn't sign you in",
+                "couldn't sign in",
+                "wrong username or password",
+                "invalid username or password",
+                "enter a correct password",
+                "password doesn't match",
+                "try again",
+                "forgot password",
+                "reset password",
+                "password error",
+                "authentication failed",
+                "sign-in failed",
+                "login failed",
+                "access denied"
+            ]
+            
+            password_error_detected = any(indicator in page_source for indicator in password_error_indicators)
+            
+            # Check for error elements on page
+            password_error_selectors = [
+                '//div[contains(@class, "LXRPh")]',  # Google error message container
+                '//div[contains(@jsname, "B34EJ")]',  # Another error container
+                '//span[contains(@class, "Df4rGb")]', # Error text span
+                '//div[@role="alert"]',              # ARIA alert role
+                '//div[contains(@class, "dEOOab")]',  # Password error container
+                '//div[contains(text(), "Wrong password")]',
+                '//div[contains(text(), "Try again")]',
+                '//span[contains(text(), "Couldn\'t sign you in")]',
+                '//span[contains(text(), "Wrong username or password")]'
+            ]
+            
+            error_element_found = False
+            error_message = "Unknown password error"
+            
+            for selector in password_error_selectors:
+                try:
+                    error_element = driver.find_element(By.XPATH, selector)
+                    if error_element.is_displayed():
+                        error_element_found = True
+                        error_text = error_element.text.strip()
+                        if error_text:
+                            error_message = error_text
+                        break
+                except:
+                    continue
+            
+            # If password error detected, handle it immediately
+            if password_error_detected or error_element_found:
+                user_friendly_message = "❌ Wrong Password: " + error_message
+                if "wrong password" in error_message.lower() or "incorrect" in error_message.lower():
+                    user_friendly_message = "❌ Wrong password. Please check your password and try again."
+                elif "couldn't sign" in error_message.lower():
+                    user_friendly_message = "❌ Login failed. Wrong password or account locked."
+                elif "try again" in error_message.lower():
+                    user_friendly_message = "❌ Password incorrect. Please verify your password."
+                else:
+                    user_friendly_message = f"❌ Login Error: {error_message}"
+                
+                status_queue.put(("error", f"[{email}] {user_friendly_message}"))
+                save_failed_account(email, password, user_friendly_message)
+                
+                # Close browser immediately after password error - NO SCREENSHOTS
+                status_queue.put(("status", f"[{email}] � Closing browser after password error..."))
+                
+                # Close browser immediately after password error
+                status_queue.put(("status", f"[{email}] 🔄 Closing browser after password error..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed after password error"))
+                except:
+                    pass
+                return
+            
+            # IMMEDIATE DETECTION OF GOOGLE VERIFICATION CHALLENGES AFTER PASSWORD
+            # First check if we successfully reached the account dashboard
+            success_indicators = [
+                "myaccount.google.com",
+                "accounts.google.com/ManageAccount",
+                "manage your google account"
+            ]
+            
+            success_detected = any(indicator in current_url.lower() or indicator in page_source for indicator in success_indicators)
+            
+            if success_detected:
+                status_queue.put(("status", f"[{email}] ✅ Successfully reached account dashboard - proceeding with automation"))
+            else:
+                # Only check for verification challenges if we didn't reach success page
+                # Check for verification screens that appear after password entry
+                google_verification_patterns = [
+                    "2-step verification",
+                    "confirm you're not a robot", 
+                    "prove you're not a robot",
+                    "help keep your account safe",
+                    "make sure it's really you", 
+                    "verify it's you",
+                    "verify that it's you",
+                    "to help keep your account safe",
+                    "google wants to make sure it's really you"
+                ]
+                
+                verification_detected = any(pattern in page_source for pattern in google_verification_patterns)
+                
+                # Check URL patterns for verification challenges
+                verification_urls = [
+                    "challenge",
+                    "twosv", 
+                    "2step",
+                    "signin/v2/challenge",
+                    "deniedsigninrejected",
+                    "suspended"
+                ]
+                
+                url_verification_detected = any(pattern in current_url for pattern in verification_urls)
+                
+                if verification_detected or url_verification_detected:
+                    if "2-step verification" in page_source or "2step" in current_url:
+                        verification_message = "❌ Account has existing 2-step verification enabled - Cannot proceed (account already secured)"
+                    elif "robot" in page_source:
+                        verification_message = "❌ Google robot verification required - Cannot proceed automatically"
+                    elif "help keep your account safe" in page_source:
+                        verification_message = "❌ Google identity verification required - Account flagged for manual verification" 
+                    elif "verify it's you" in page_source:
+                        verification_message = "❌ Google identity verification required - Cannot proceed automatically"
+                    elif "challenge" in current_url:
+                        verification_message = "❌ Google security challenge required - Cannot proceed automatically"
+                    elif "suspended" in current_url or "rejected" in current_url:
+                        verification_message = "❌ Account suspended or sign-in rejected by Google"
+                    else:
+                        verification_message = "❌ Google verification required - Cannot proceed automatically"
+                    
+                    status_queue.put(("error", f"[{email}] {verification_message}"))
+                    save_failed_account(email, password, verification_message)
+                    
+                    # Close browser immediately after verification detection - NO SCREENSHOTS
+                    status_queue.put(("status", f"[{email}] 🔄 Closing browser after verification challenge..."))
+                    try:
+                        driver.quit()
+                        status_queue.put(("success", f"[{email}] ✅ Browser closed after verification challenge"))
+                    except:
+                        pass
+                    return
+            
+            # If no error detected, wait for successful login
             new_url = finder.wait_for_url_change(current_url, timeout=15, expected_contains="myaccount")
             if new_url:
                 status_queue.put(("status", f"[{email}] ✅ Password accepted, redirecting..."))
             
-            time.sleep(3)
-            
         except Exception as e:
-            status_queue.put(("error", f"[{email}] Password entry failed: {e}"))
-            save_failed_account(email, password, f"Password entry failed: {e}")
+            # Check for timeout first
+            is_timeout, timeout_msg = check_timeout()
+            if is_timeout:
+                handle_account_failure(timeout_msg)
+                try:
+                    driver.quit()
+                except:
+                    pass
+                return
             
-            # Close browser immediately after password failure
-            status_queue.put(("status", f"[{email}] 🔄 Closing browser after password failure..."))
+            # Enhanced password error handling with specific error detection
+            page_source = driver.page_source.lower() if driver else ""
+            error_message = str(e).lower()
+            
+            user_friendly_message = ""
+            
+            # Specific Google error message patterns
+            if any(phrase in error_message or phrase in page_source for phrase in [
+                "wrong password", "incorrect password", "password is incorrect",
+                "couldn't sign you in", "couldn't sign in", "try again"
+            ]):
+                user_friendly_message = "❌ Wrong password. Please check your password and try again."
+            elif any(phrase in error_message or phrase in page_source for phrase in [
+                "account locked", "account disabled", "suspended"
+            ]):
+                user_friendly_message = "❌ Account is locked or suspended. Contact Google support."
+            elif any(phrase in error_message or phrase in page_source for phrase in [
+                "captcha", "verification required", "unusual activity"
+            ]):
+                user_friendly_message = "❌ Account requires manual verification (CAPTCHA/unusual activity)."
+            elif any(phrase in error_message or phrase in page_source for phrase in [
+                "timeout", "connection", "network"
+            ]):
+                user_friendly_message = "❌ Network timeout or connection issue. Please try again later."
+            else:
+                user_friendly_message = f"❌ Password entry failed: {str(e)[:100]}..."
+            
+            # CRITICAL: Check if we actually succeeded despite the exception  
             try:
-                driver.quit()
-                status_queue.put(("success", f"[{email}] ✅ Browser closed after password failure"))
+                current_url = driver.current_url.lower()
+                if "myaccount.google.com" in current_url:
+                    status_queue.put(("status", f"[{email}] ✅ Successfully reached account dashboard despite exception - continuing"))
+                    # Don't call handle_account_failure - we actually succeeded!
+                    # Continue to next step instead of returning
+                else:
+                    # Only treat as failure if we're NOT on success page
+                    handle_account_failure(user_friendly_message)
+                    
+                    # Close browser immediately after password failure
+                    status_queue.put(("status", f"[{email}] 🔄 Closing browser after password failure..."))
+                    try:
+                        driver.quit()
+                        status_queue.put(("success", f"[{email}] ✅ Browser closed after password failure"))
+                    except:
+                        pass
+                    return
             except:
-                pass
-            return
+                # If we can't check URL, treat as failure
+                handle_account_failure(user_friendly_message)
+                
+                # Close browser immediately after password failure
+                status_queue.put(("status", f"[{email}] 🔄 Closing browser after password failure..."))
+                try:
+                    driver.quit()
+                    status_queue.put(("success", f"[{email}] ✅ Browser closed after password failure"))
+                except:
+                    pass
+                return
 
-        # Step 4: Smart login verification
+        # Step 4: Smart login verification with comprehensive error detection
         try:
             status_queue.put(("status", f"[{email}] Verifying successful login"))
+            
+            # Set a maximum time limit for login verification (3 minutes)
+            login_start_time = time.time()
+            login_timeout = 180  # 3 minutes
             
             # Multiple success indicators
             success_patterns = [
@@ -1410,33 +1857,80 @@ def google_automation_worker(email, password, status_queue, stop_event):
             ]
             
             login_verified = False
-            for pattern in success_patterns:
-                try:
-                    finder.wait.until(EC.url_contains(pattern))
-                    login_verified = True
-                    break
-                except TimeoutException:
-                    continue
+            verification_attempts = 0
+            max_attempts = 6  # 6 attempts with 15 second intervals = 90 seconds max
             
-            if not login_verified:
-                # Check for common login obstacles
+            while not login_verified and verification_attempts < max_attempts:
+                verification_attempts += 1
+                
+                # Check if we've exceeded overall timeout
+                if time.time() - login_start_time > login_timeout:
+                    raise Exception("Login verification timeout (3 minutes) - Account may be slow or blocked")
+                
                 current_url = driver.current_url
                 page_source = driver.page_source.lower()
                 
-                if "challenge" in current_url or "challenge" in page_source:
-                    raise Exception("Account requires additional verification/challenge")
-                elif "captcha" in page_source:
-                    raise Exception("CAPTCHA verification required")
-                elif "suspicious" in page_source:
-                    raise Exception("Suspicious activity detected")
+                # Check for success first - if successful, skip all verification challenge checks
+                for pattern in success_patterns:
+                    if pattern in current_url:
+                        login_verified = True
+                        break
+                
+                if login_verified:
+                    status_queue.put(("status", f"[{email}] ✅ Successfully reached account dashboard - login verified!"))
+                    break  # Exit verification loop - we're successful!
+                
+                # ONLY check for verification challenges if we haven't reached success page
+                # Check for SPECIFIC error conditions (avoid broad patterns that might match success pages)
+                if "deniedsigninrejected" in current_url:
+                    raise Exception("❌ Sign-in rejected by Google - Account may be compromised or flagged")
+                elif "disabled" in current_url or "suspended" in current_url:
+                    raise Exception("❌ Account disabled or suspended - Contact Google support")
+                elif "signin/v2/challenge/pwd" not in current_url and "challenge" in current_url:
+                    # Ignore normal password challenge URLs, but catch actual verification challenges
+                    if "selectchallenge" in current_url or "challenge/selection" in current_url:
+                        raise Exception("❌ Google security challenge required - Cannot proceed automatically")
+                elif "captcha" in page_source or "recaptcha" in current_url:
+                    raise Exception("❌ CAPTCHA verification required - Cannot proceed automatically") 
+                elif "2-step verification" in page_source and "myaccount" not in current_url:
+                    # Only flag as error if NOT on account dashboard (success page might mention 2FA)
+                    raise Exception("❌ Account has existing 2-step verification enabled - Cannot proceed (account already secured)")
+                elif "confirm you're not a robot" in page_source:
+                    raise Exception("❌ Google robot verification required - Cannot proceed automatically")
+                elif "verify it's you" in page_source and "signin" in current_url:
+                    # Only flag if still on signin page, not if on success page
+                    raise Exception("❌ Google identity verification required - Cannot proceed automatically")
+                
+                # Wait before next attempt
+                status_queue.put(("status", f"[{email}] Login verification attempt {verification_attempts}/{max_attempts}"))
+                time.sleep(15)  # Wait 15 seconds between attempts
+            
+            if not login_verified:
+                # Final check for specific error messages
+                final_url = driver.current_url
+                final_source = driver.page_source.lower()
+                
+                if "signin" in final_url:
+                    raise Exception("❌ Still on login page - Password likely incorrect or account locked")
                 else:
-                    raise Exception("Login verification failed - unknown issue")
+                    raise Exception(f"❌ Login verification failed after {max_attempts} attempts - Unknown issue")
             
             status_queue.put(("status", f"[{email}] ✅ Login verified successfully"))
             
         except Exception as e:
-            status_queue.put(("error", f"[{email}] Login verification failed: {e}"))
-            save_failed_account(email, password, f"Login verification failed: {e}")
+            # Check for timeout first
+            is_timeout, timeout_msg = check_timeout()
+            if is_timeout:
+                handle_account_failure(timeout_msg)
+                try:
+                    driver.quit()
+                except:
+                    pass
+                return
+            
+            # Enhanced login verification error handling
+            error_message = str(e)
+            handle_account_failure(f"Login verification failed: {error_message}")
             
             # Close browser immediately after login verification failure
             status_queue.put(("status", f"[{email}] 🔄 Closing browser after login verification failure..."))
@@ -1448,6 +1942,16 @@ def google_automation_worker(email, password, status_queue, stop_event):
             return
 
         # Step 5: Smart 2FA navigation
+        # Check timeout before 2FA setup
+        is_timeout, timeout_msg = check_timeout()
+        if is_timeout:
+            handle_account_failure(timeout_msg)
+            try:
+                driver.quit()
+            except:
+                pass
+            return
+            
         if stop_event.is_set():
             status_queue.put(("status", f"[{email}] Stopped - Closing browser..."))
             try:
@@ -1882,20 +2386,43 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 strong = modal.find_element(By.XPATH, './/strong[@class="v2CTKd KaSAf"]')
                 spans = strong.find_elements(By.TAG_NAME, 'span')
                 app_password = ''.join([span.text for span in spans])  # Keep spaces exactly as shown
-                status_queue.put(("success", f"[{email}] 🔑 Generated app password: {app_password}"))
+                status_queue.put(("status", f"[{email}] 🔑 Generated app password: {app_password}"))
                 
                 # Collect backup codes after getting app password
                 backup_codes = collect_backup_codes(driver, finder, email, status_queue)
                 
                 # IMMEDIATE SAVE - Save app password and backup codes together RIGHT NOW
                 status_queue.put(("status", f"[{email}] 💾 Saving app password and backup codes to CSV immediately..."))
-                save_result = save_app_password(email, password, app_password, backup_codes)
                 
-                # Confirm immediate save success with details
-                backup_count = len(backup_codes) if backup_codes else 0
-                status_queue.put(("success", f"[{email}] ✅ SAVED IMMEDIATELY: App password + {backup_count} backup codes written to CSV"))
-                status_queue.put(("success", f"[{email}] 📝 File: successful_accounts.csv"))
-                status_queue.put(("update_status", (email, 'Success - Saved')))
+                # STRICT SUCCESS VALIDATION - Only save if ALL criteria are met
+                success_criteria = {
+                    'app_password_valid': app_password and len(app_password.strip().replace(' ', '')) >= 16,
+                    'backup_codes_sufficient': backup_codes and len(backup_codes) >= 2,
+                    'phone_setup_completed': True  # We assume phone was set up if we got this far
+                }
+                
+                # Validate each component
+                validation_messages = []
+                if not success_criteria['app_password_valid']:
+                    validation_messages.append("❌ App password invalid or too short")
+                if not success_criteria['backup_codes_sufficient']:
+                    validation_messages.append(f"❌ Insufficient backup codes ({len(backup_codes) if backup_codes else 0}/2 minimum)")
+                
+                # Only proceed if ALL criteria are met
+                if all(success_criteria.values()):
+                    save_result = save_app_password(email, password, app_password, backup_codes)
+                    
+                    # Confirm immediate save success with details
+                    backup_count = len(backup_codes) if backup_codes else 0
+                    status_queue.put(("success", f"[{email}] ✅ COMPLETE SUCCESS: App password ({len(app_password)} chars) + {backup_count} backup codes saved"))
+                    status_queue.put(("success", f"[{email}] 📝 File: successful_accounts.csv"))
+                    status_queue.put(("update_status", (email, 'Complete Success')))
+                else:
+                    # Report what failed validation
+                    error_msg = f"❌ INCOMPLETE SETUP: {'; '.join(validation_messages)}"
+                    status_queue.put(("error", f"[{email}] {error_msg}"))
+                    save_failed_account(email, password, error_msg)
+                    status_queue.put(("update_status", (email, 'Incomplete Setup')))
                 
                 # Close browser immediately and proceed to next
                 status_queue.put(("status", f"[{email}] 🔄 Closing browser and proceeding to next account..."))
@@ -1969,6 +2496,9 @@ def google_automation_worker(email, password, status_queue, stop_event):
 
 class GoogleAutomationGUI:
     def __init__(self, root):
+        # CRITICAL: IMMEDIATE EXPIRY CHECK - TERMINATE IF EXPIRED
+        _check_license_expiry_immediate()
+        
         # CRITICAL: Comprehensive license validation at GUI initialization
         if not LICENSE_ENFORCEMENT_ACTIVE:
             print("SECURITY VIOLATION: License enforcement disabled!")
@@ -2156,6 +2686,9 @@ class GoogleAutomationGUI:
         self.log_message("   You can manually complete any failed steps in the open browsers.")
     
     def browse_file(self):
+        # CRITICAL: Check expiry before allowing file operations
+        _check_license_expiry_immediate()
+        
         file_path = filedialog.askopenfilename(
             title="Select Accounts CSV File",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
@@ -2193,6 +2726,9 @@ class GoogleAutomationGUI:
             self.log_message(f"❌ Error loading accounts: {e}")
     
     def start_automation(self):
+        # CRITICAL: IMMEDIATE EXPIRY CHECK - NO AUTOMATION IF EXPIRED
+        _check_license_expiry_immediate()
+        
         # CRITICAL: Comprehensive license check before starting automation
         if not LICENSE_ENFORCEMENT_ACTIVE:
             messagebox.showerror("Security Error", "License enforcement has been tampered with. Application will exit.")
@@ -2217,7 +2753,10 @@ class GoogleAutomationGUI:
         hardware_id = get_hardware_id()
         valid, message = validate_license_key("", hardware_id)
         if not valid:
-            messagebox.showerror("License Error", f"License validation failed: {message}")
+            if "expired" in message.lower():
+                messagebox.showerror("License Expired", f"Your license has expired: {message}\n\nPlease renew your license to continue using the automation features.")
+            else:
+                messagebox.showerror("License Error", f"License validation failed: {message}")
             return
         
         if not self.accounts:
@@ -2237,6 +2776,9 @@ class GoogleAutomationGUI:
         threading.Thread(target=self.run_automation, daemon=True).start()
     
     def run_automation(self):
+        # CRITICAL: Check expiry before running automation
+        _check_license_expiry_immediate()
+        
         import concurrent.futures
         try:
             self.worker_threads = []
@@ -2412,6 +2954,9 @@ class GoogleAutomationGUI:
     
     def check_license_validity(self):
         """Check and display current license validity"""
+        # CRITICAL: Check expiry immediately
+        _check_license_expiry_immediate()
+        
         try:
             hardware_id = get_hardware_id()
             valid, message = validate_license_key("", hardware_id)
@@ -2444,6 +2989,9 @@ class GoogleAutomationGUI:
     
     def reactivate_license(self):
         """Show license reactivation dialog"""
+        # CRITICAL: Check expiry before allowing reactivation
+        _check_license_expiry_immediate()
+        
         try:
             # Remove existing license file
             if os.path.exists("license.dat"):
@@ -2986,9 +3534,12 @@ Hardware ID: {get_hardware_id()[:20]}...
                             )
                         else:
                             self.license_status_label.config(
-                                text=f"⚠️ License expired on: {license_info['expiry']}",
+                                text=f"🚫 LICENSE EXPIRED on: {license_info['expiry']} ({abs(days_left)} days ago) - FUNCTIONALITY DISABLED",
                                 fg='#e74c3c'
                             )
+                            # Disable the start button for expired licenses
+                            if hasattr(self, 'start_btn'):
+                                self.start_btn.config(state='disabled')
                     except Exception:
                         self.license_status_label.config(
                             text=f"✅ Licensed to: {hardware_id[:12]}... | Status: Valid",
@@ -3033,7 +3584,10 @@ Hardware ID: {get_hardware_id()[:20]}...
         def periodic_check():
             while True:
                 try:
-                    time.sleep(300)  # Check every 5 minutes
+                    time.sleep(30)  # Check every 30 seconds - AGGRESSIVE MONITORING
+                    
+                    # IMMEDIATE EXPIRY CHECK - TERMINATE IF EXPIRED
+                    _check_license_expiry_immediate()
                     
                     # Comprehensive security validation
                     if not LICENSE_ENFORCEMENT_ACTIVE or not RUNTIME_VALIDATION_ACTIVE:
@@ -3073,6 +3627,9 @@ Hardware ID: {get_hardware_id()[:20]}...
 
     def show_license_info(self):
         """Show detailed license information dialog"""
+        # CRITICAL: Check expiry before showing license info
+        _check_license_expiry_immediate()
+        
         info_window = tk.Toplevel(self.root)
         info_window.title("License Information")
         info_window.geometry("600x500")
@@ -3201,6 +3758,12 @@ Version History:
                   command=info_window.destroy).pack(side='right')
 
 def main():
+    # ======================== IMMEDIATE LICENSE EXPIRY CHECK ========================
+    # CHECK EXPIRY BEFORE ANYTHING ELSE - NO GUI, NO PROCESSING, NOTHING!
+    print("🔍 Checking license expiry status...")
+    _check_license_expiry_immediate()
+    print("✅ License expiry check passed - proceeding with application startup")
+    
     # ======================== FINAL SECURITY VALIDATION ========================
     # Verify all security flags are properly set
     security_flags = [
@@ -3258,8 +3821,12 @@ def main():
     print(f"License validation 2: {valid2}")
     
     if not (valid1 and valid2):
-        # No valid license found, show activation window
-        print("No valid license found. Opening license activation window...")
+        # No valid license found or expired, show activation window
+        if "expired" in message1.lower():
+            print(f"License has expired: {message1}")
+            print("Opening license activation window for renewal...")
+        else:
+            print("No valid license found. Opening license activation window...")
         print("Please wait while the license activation window loads...")
         
         try:

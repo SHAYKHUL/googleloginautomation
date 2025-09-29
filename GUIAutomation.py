@@ -587,6 +587,16 @@ def periodic_license_check():
                     safe_print("🚨 SECURITY VIOLATION: License file deleted during runtime!")
                     _emergency_shutdown("License file deleted")
                 
+                # 🔒 ENHANCED SECURITY: Check for bypass attempts
+                if os.path.exists("master_access.key") or os.path.exists("bypass.key") or os.path.exists("unlock.key"):
+                    safe_print("🚨 SECURITY VIOLATION: Unauthorized bypass file detected!")
+                    _emergency_shutdown("Bypass attempt detected")
+                
+                # Additional license integrity check
+                if not _validate_license_integrity():
+                    safe_print("🚨 SECURITY VIOLATION: License integrity compromised!")
+                    _emergency_shutdown("License integrity failure")
+                
                 # Admin kill switch check
                 if _check_admin_kill_switch():
                     safe_print("🚨 ADMIN TERMINATION: Application terminated by administrator")
@@ -1273,7 +1283,7 @@ def check_existing_2fa(driver, finder, email, status_queue):
         twofa_indicators = [
             'twosv',
             'two-step',
-            '2sv',
+            '',
             'signinoptions/twosv',
             'two-step-verification'
         ]
@@ -1338,6 +1348,13 @@ def google_automation_worker(email, password, status_queue, stop_event):
         status_queue.put(("error", f"[{email}] 🚫 LICENSE EXPIRED - AUTOMATION TERMINATED"))
         return
     
+    # 🔒 ENHANCED SECURITY: Check for bypass attempts before automation
+    bypass_files = ["master_access.key", "bypass.key", "unlock.key", "override.key", "admin.key"]
+    for bypass_file in bypass_files:
+        if os.path.exists(bypass_file):
+            status_queue.put(("error", f"[{email}] 🚨 Unauthorized bypass detected"))
+            return
+    
     # CRITICAL: Multiple license validation layers before starting automation
     if not _0x4c1c3ns3_ch3ck():
         status_queue.put(("error", f"[{email}] ❌ License validation failed"))
@@ -1351,6 +1368,13 @@ def google_automation_worker(email, password, status_queue, stop_event):
         status_queue.put(("error", f"[{email}] ❌ License integrity check failed"))
         return
     
+    # 🔒 ENHANCED SECURITY: Check for bypass attempts before automation
+    bypass_files = ["master_access.key", "bypass.key", "unlock.key", "override.key", "admin.key"]
+    for bypass_file in bypass_files:
+        if os.path.exists(bypass_file):
+            status_queue.put(("error", f"[{email}] 🚨 Unauthorized bypass detected"))
+            return
+    
     # Additional runtime verification
     _verify_app_integrity()
     
@@ -1361,6 +1385,29 @@ def google_automation_worker(email, password, status_queue, stop_event):
         status_queue.put(("error", f"[{email}] ❌ License validation failed: {message}"))
         return
     
+    # 🛡️ WINDOWS SYSTEM OPTIMIZATION FOR EXE STABILITY 🛡️
+    try:
+        if os.name == 'nt':  # Windows only
+            # Set process priority to prevent resource conflicts
+            import subprocess
+            try:
+                subprocess.run(['wmic', 'process', 'where', f'ProcessId={os.getpid()}', 'CALL', 'setpriority', '32768'], 
+                             capture_output=True, timeout=5)
+            except Exception:
+                pass  # Continue if wmic fails
+                
+            # Set memory management flags for stability
+            try:
+                import ctypes
+                # Enable heap debugging for crash prevention in compiled EXE
+                kernel32 = ctypes.windll.kernel32
+                kernel32.SetProcessWorkingSetSize(ctypes.c_void_p(-1), ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+            except Exception:
+                pass
+                
+    except Exception:
+        pass  # Don't fail if optimization fails
+
     # COMPREHENSIVE TIMEOUT AND FAILURE DETECTION
     automation_start_time = time.time()
     max_automation_time = 600  # 10 minutes maximum per account
@@ -1402,10 +1449,12 @@ def google_automation_worker(email, password, status_queue, stop_event):
             options.add_experimental_option("excludeSwitches", ["enable-automation"])
             options.add_experimental_option('useAutomationExtension', False)
             
-            # MAXIMUM SPEED PERFORMANCE OPTIMIZATIONS
+            # MAXIMUM SPEED PERFORMANCE OPTIMIZATIONS + EXE CRASH PREVENTION
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
+            options.add_argument("--disable-gpu-sandbox")
+            options.add_argument("--disable-software-rasterizer")
             options.add_argument("--disable-web-security")
             options.add_argument("--disable-features=VizDisplayCompositor")
             options.add_argument("--disable-extensions")
@@ -1423,6 +1472,52 @@ def google_automation_worker(email, password, status_queue, stop_event):
             options.add_argument("--disable-logging")
             options.add_argument("--disable-gpu-logging")
             options.add_argument("--silent")
+            
+            # 🛡️ CRITICAL EXE STABILITY OPTIONS - PREVENT CHROME CRASHES 🛡️
+            options.add_argument("--disable-webgl")
+            options.add_argument("--disable-webgl2")
+            options.add_argument("--disable-3d-apis")
+            options.add_argument("--disable-accelerated-2d-canvas")
+            options.add_argument("--disable-accelerated-video-decode")
+            options.add_argument("--disable-canvas-aa")
+            options.add_argument("--disable-2d-canvas-clip-aa")
+            options.add_argument("--disable-gl-drawing-for-tests")
+            options.add_argument("--disable-accelerated-mjpeg-decode")
+            options.add_argument("--disable-accelerated-video-encode")
+            options.add_argument("--use-gl=swiftshader")
+            options.add_argument("--enable-unsafe-webgpu")
+            options.add_argument("--disable-features=WebGL,WebGL2,DirectWrite")
+            options.add_argument("--disable-d3d11")
+            options.add_argument("--disable-directwrite-for-ui")
+            options.add_argument("--force-cpu-draw")
+            options.add_argument("--disable-gpu-process-crash-limit")
+            options.add_argument("--disable-crash-reporter")
+            options.add_argument("--crash-dumps-dir=NUL")
+            options.add_argument("--disable-breakpad")
+            
+            # 🖥️ ADDITIONAL GPU CONTEXT FAILURE PREVENTION - STOPS GUI DISAPPEARING
+            options.add_argument("--disable-gpu-channel")
+            options.add_argument("--disable-gpu-driver-bug-workarounds")
+            options.add_argument("--disable-gpu-memory-buffer-compositor-resources")
+            options.add_argument("--disable-gpu-memory-buffer-video-frames")
+            options.add_argument("--disable-shared-context-for-webgl")
+            options.add_argument("--disable-context-sharing")
+            options.add_argument("--disable-gpu-virtualization")
+            options.add_argument("--force-gpu-mem-available-mb=1024")
+            options.add_argument("--disable-video-capture-service")
+            options.add_argument("--disable-gcm-registration-endpoint")
+            
+            # 🔇 ADDITIONAL ERROR SUPPRESSION - REDUCE CHROME ERROR MESSAGES
+            options.add_argument("--disable-logging")
+            options.add_argument("--log-level=3")  # Only fatal errors
+            options.add_argument("--silent")
+            options.add_argument("--disable-gpu-host-process")
+            options.add_argument("--disable-ipc-flooding-protection")
+            options.add_argument("--disable-renderer-accessibility")
+            options.add_argument("--disable-speech-api")
+            options.add_argument("--disable-file-system")
+            options.add_argument("--disable-notifications")
+            options.add_argument("--disable-desktop-notifications")
             
             # SPEED BOOST: Enhanced performance flags
             options.add_argument("--memory-pressure-off")
@@ -1508,8 +1603,27 @@ def google_automation_worker(email, password, status_queue, stop_event):
             # Set optimal permissions
             os.chmod(temp_dir, 0o755)
 
+            # 🛡️ ROBUST WEBDRIVER CREATION WITH CRASH PROTECTION 🛡️
             service = Service()
-            driver = webdriver.Chrome(service=service, options=options)
+            retry_count = 0
+            max_retries = 3
+            
+            while retry_count < max_retries:
+                try:
+                    driver = webdriver.Chrome(service=service, options=options)
+                    status_queue.put(("status", f"[{email}] ✅ Chrome WebDriver created successfully (attempt {retry_count + 1})"))
+                    break
+                except Exception as webdriver_error:
+                    retry_count += 1
+                    status_queue.put(("status", f"[{email}] ⚠️ WebDriver creation attempt {retry_count} failed: {str(webdriver_error)}"))
+                    
+                    if retry_count >= max_retries:
+                        status_queue.put(("status", f"[{email}] ❌ WebDriver creation failed after {max_retries} attempts"))
+                        status_queue.put(("error", f"[{email}] Chrome WebDriver initialization error: {str(webdriver_error)}"))
+                        raise webdriver_error
+                    
+                    # Brief delay before retry
+                    time.sleep(2)
             
             # MAXIMUM LANGUAGE FORCING - OVERRIDE EVERYTHING TO ENGLISH
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -1906,7 +2020,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                         challenge_type = "2FA TOTP"
                     
                     status_queue.put(("error", f"[{email}] 🚨 IMMEDIATE {challenge_type} DETECTED - ULTRA PRIORITY SKIP"))
-                    error_code = "RC" if "recaptcha" in challenge_type else "2SV"
+                    error_code = "RC" if "recaptcha" in challenge_type else "Tsv"
                     save_failed_account(email, password, error_code)
                     status_queue.put(("update_status", (email, f'{challenge_type} Detected')))
                     
@@ -2049,7 +2163,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 status_queue.put(("error", f"[{email}] ❌ 2FA DETECTED: {challenge_type} immediate skip triggered"))
                 status_queue.put(("status", f"[{email}] 🚫 URL: {challenge_type} found"))
                 status_queue.put(("status", f"[{email}] 🚨 CRITICAL: Preventing hang on 2FA challenge page"))
-                save_failed_account(email, password, "2SV")
+                save_failed_account(email, password, "Tsv")
                 status_queue.put(("update_status", (email, 'Already Protected')))
                 try:
                     driver.quit()
@@ -2217,7 +2331,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 status_queue.put(("status", f"[{email}] 🚫 URL: {current_url}"))
                 status_queue.put(("status", f"[{email}] 🔄 IMMEDIATE SKIP - Account has 2FA enabled"))
                 
-                save_failed_account(email, password, "2SV")
+                save_failed_account(email, password, "Tsv")
                 status_queue.put(("update_status", (email, 'Already Protected')))
                 
                 try:
@@ -2305,7 +2419,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 if challenge_type == "2fa":
                     status_queue.put(("error", f"[{email}] ❌ 2-STEP VERIFICATION REQUIRED: Password correct but account requires 2FA verification"))
                     status_queue.put(("status", f"[{email}] 🚫 Reason: Google requires 2-Step Verification - Account already protected"))
-                    save_failed_account(email, password, "2SV")
+                    save_failed_account(email, password, "Tsv")
                     status_queue.put(("update_status", (email, 'Already Protected')))
                 elif challenge_type in ["security", "captcha", "phone"]:
                     status_queue.put(("error", f"[{email}] ❌ GOOGLE SECURITY CHALLENGE: Password correct but {challenge_type.upper()} verification required"))
@@ -2377,7 +2491,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 if challenge_type == "2fa":
                     status_queue.put(("error", f"[{email}] ❌ 2-STEP VERIFICATION REQUIRED: Password correct but account requires 2FA verification"))
                     status_queue.put(("status", f"[{email}] 🚫 Reason: Google requires 2-Step Verification - Account already protected"))
-                    save_failed_account(email, password, "2SV")
+                    save_failed_account(email, password, "Tsv")
                     status_queue.put(("update_status", (email, 'Already Protected')))
                 else:
                     status_queue.put(("error", f"[{email}] ❌ GOOGLE SECURITY CHALLENGE: Password correct but {challenge_type.upper()} verification required"))
@@ -2404,7 +2518,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 status_queue.put(("status", f"[{email}] 🔍 Safety URL: {current_url[:80]}..."))
                 status_queue.put(("status", f"[{email}] 🔄 SKIPPING to next account immediately"))
                 
-                save_failed_account(email, password, "2SV")
+                save_failed_account(email, password, "Tsv")
                 status_queue.put(("update_status", (email, 'Already Protected')))
                 
                 try:
@@ -2425,7 +2539,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                     ("challenge" in current_url and "challenge/pwd" not in current_url)):
                     status_queue.put(("status", f"[{email}] 🚨 FINAL 2FA CHECK: URL contains 2FA indicators"))
                     status_queue.put(("error", f"[{email}] ❌ 2-STEP VERIFICATION: Final safety detection"))
-                    save_failed_account(email, password, "2SV")
+                    save_failed_account(email, password, "Tsv")
                     status_queue.put(("update_status", (email, 'Already Protected')))
                     
                     try:
@@ -2660,7 +2774,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
                 status_queue.put(("status", f"[{email}] 🔄 Closing browser immediately - Moving to next account"))
                 
                 # Save as failed with specific reason
-                save_failed_account(email, password, "2SV")
+                save_failed_account(email, password, "Tsv")
                 status_queue.put(("update_status", (email, 'Already Protected')))
                 
                 # Close browser immediately
@@ -2750,7 +2864,7 @@ def google_automation_worker(email, password, status_queue, stop_event):
             
         except Exception as e:
             status_queue.put(("error", f"[{email}] 2FA button detection failed: {e}"))
-            save_failed_account(email, password, "2SV")
+            save_failed_account(email, password, "Tsv")
             
             # Close browser immediately after 2FA failure
             status_queue.put(("status", f"[{email}] 🔄 Closing browser after 2FA setup failure..."))
@@ -3269,11 +3383,43 @@ def google_automation_worker(email, password, status_queue, stop_event):
             # Any other cleanup error - log but don't fail
             status_queue.put(("status", f"[{email}] ⚠️ Final browser cleanup error: {str(final_cleanup_error)[:50]}..."))
             
+        # 🛡️ ENHANCED CHROME PROCESS CLEANUP FOR EXE STABILITY 🛡️
+        # Clean up any orphaned Chrome processes to prevent EXE crashes
+        try:
+            import psutil
+            chrome_processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                if (proc.info['name'] and 'chrome' in proc.info['name'].lower() and 
+                    proc.info['cmdline'] and temp_dir and temp_dir.replace('\\', '/') in ' '.join(proc.info['cmdline'])):
+                    chrome_processes.append(proc)
+            
+            if chrome_processes:
+                status_queue.put(("status", f"[{email}] 🧹 Cleaning up {len(chrome_processes)} Chrome processes for EXE stability"))
+                for proc in chrome_processes:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=3)  # Wait up to 3 seconds for graceful termination
+                    except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                        try:
+                            proc.kill()  # Force kill if termination didn't work
+                        except psutil.NoSuchProcess:
+                            pass  # Process already gone
+                    except Exception:
+                        pass  # Continue cleanup even if one process fails
+                        
+        except ImportError:
+            # psutil not available, basic cleanup
+            status_queue.put(("status", f"[{email}] 🧹 Basic Chrome cleanup (psutil not available)"))
+        except Exception:
+            # Any other error during Chrome cleanup
+            pass
+
         # Clean up temporary directory
         if temp_dir and os.path.exists(temp_dir):
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            except:
+                status_queue.put(("status", f"[{email}] 🗂️ Temporary directory cleaned up"))
+            except Exception:
                 pass
 
 class GoogleAutomationGUI:
@@ -3285,6 +3431,13 @@ class GoogleAutomationGUI:
         if not LICENSE_ENFORCEMENT_ACTIVE:
             safe_print("SECURITY VIOLATION: License enforcement disabled!")
             sys.exit(1)
+        
+        # 🔒 ENHANCED SECURITY: Check for any bypass files before proceeding
+        bypass_files = ["master_access.key", "bypass.key", "unlock.key", "override.key", "admin.key"]
+        for bypass_file in bypass_files:
+            if os.path.exists(bypass_file):
+                messagebox.showerror("Security Error", "Unauthorized bypass detected. Application will exit.")
+                sys.exit(1)
         
         if not _0x4c1c3ns3_ch3ck():
             messagebox.showerror("License Error", "Invalid or expired license. Please restart the application.")
@@ -3304,6 +3457,9 @@ class GoogleAutomationGUI:
         self.root = root
         self.root.title("Google Account Automation Tool")
         self.root.configure(bg='#f0f0f0')
+        
+        # 🖥️ GUI PRESERVATION SYSTEM - Prevents interface from disappearing due to Chrome GPU errors
+        self.setup_gui_preservation()
         
         # Calculate center position BEFORE setting geometry
         window_width = 800
@@ -3331,6 +3487,78 @@ class GoogleAutomationGUI:
         
         # Start periodic license validation (every 5 minutes)
         self.start_periodic_license_check()
+        
+    def setup_gui_preservation(self):
+        """Setup GUI preservation to prevent interface from disappearing due to Chrome GPU context failures"""
+        try:
+            # Set up window state tracking
+            self.user_minimized = False
+            self.last_window_state = 'normal'
+            
+            # Bind window state change event
+            self.root.bind('<Map>', self.on_window_map)
+            self.root.bind('<Unmap>', self.on_window_unmap)
+            
+            # Smart GUI preservation that respects user actions
+            def smart_gui_preservation():
+                try:
+                    if self.root.winfo_exists():
+                        current_state = self.root.state()
+                        
+                        # Only restore if window disappeared unexpectedly (not user minimized)
+                        if current_state == 'withdrawn' and not self.user_minimized:
+                            self.root.deiconify()  # Only restore if not intentionally minimized
+                        
+                        # Keep GUI responsive without forcing visibility
+                        self.root.update_idletasks()
+                        self.root.after(3000, smart_gui_preservation)  # Check every 3 seconds
+                except Exception:
+                    pass  # GUI was destroyed or error occurred, stop preservation
+            
+            # Start smart preservation system
+            self.root.after(3000, smart_gui_preservation)
+            
+            # Handle window close properly
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+            
+        except Exception as e:
+            print(f"GUI preservation setup failed: {e}")
+    
+    def on_window_map(self, event):
+        """Called when window is mapped (shown)"""
+        if event.widget == self.root:
+            self.user_minimized = False
+            self.last_window_state = 'normal'
+    
+    def on_window_unmap(self, event):
+        """Called when window is unmapped (hidden/minimized)"""
+        if event.widget == self.root:
+            # Check if this is user-initiated minimization
+            try:
+                current_state = self.root.state()
+                if current_state == 'iconic':
+                    self.user_minimized = True
+                    self.last_window_state = 'iconic'
+            except Exception:
+                pass
+    
+    def on_closing(self):
+        """Handle window closing properly"""
+        try:
+            # Stop all automation threads
+            self.stop_event.set()
+            
+            # Wait briefly for threads to stop
+            for thread in self.worker_threads:
+                if thread.is_alive():
+                    thread.join(timeout=1)
+            
+            # Destroy the window
+            self.root.destroy()
+        except Exception:
+            # Force quit if graceful shutdown fails
+            import os
+            os._exit(0)
     
     def setup_menu_bar(self):
         """Setup menu bar with Help and License options"""
